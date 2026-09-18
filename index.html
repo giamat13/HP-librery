@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>אנציקלופדיית עולם הקסמים והכשפים</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Cinzel for Magical Titles & Assistant for Hebrew Legibility -->
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700&family=Cinzel:wght@600;800;900&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        gold: '#d4af37',
+                        'gold-bright': '#f5d77f',
+                        darkBg: '#0b0c10',
+                        cardBg: 'rgba(20, 24, 38, 0.85)',
+                        borderGold: 'rgba(212, 175, 55, 0.3)',
+                        gryffindor: '#740001',
+                        slytherin: '#1a472a',
+                        ravenclaw: '#0e1a40',
+                        hufflepuff: '#ecb939'
+                    },
+                    fontFamily: {
+                        magical: ['Cinzel', 'Assistant', 'sans-serif'],
+                        body: ['Assistant', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #08090d;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(212, 175, 55, 0.07) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(74, 144, 226, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 50% 50%, rgba(116, 0, 1, 0.04) 0%, transparent 50%);
+            background-attachment: fixed;
+            color: #e2e8f0;
+            font-family: 'Assistant', sans-serif;
+        }
+
+        /* Glassmorphism Card Style */
+        .magic-card {
+            background: rgba(18, 22, 36, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .magic-card:hover {
+            border-color: rgba(212, 175, 55, 0.7);
+            transform: translateY(-5px) scale(1.01);
+            box-shadow: 0 12px 30px -10px rgba(212, 175, 55, 0.25);
+        }
+
+        /* Glowing Text Effect */
+        .text-glow {
+            text-shadow: 0 0 12px rgba(212, 175, 55, 0.5);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0b0c10;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2a3042;
+            border-radius: 4px;
+            border: 1px solid rgba(212, 175, 55, 0.3);
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #d4af37;
+        }
+
+        /* House Specific Borders */
+        .border-Gryffindor { border-right: 4px solid #ae0001 !important; }
+        .border-Slytherin { border-right: 4px solid #2a623d !important; }
+        .border-Ravenclaw { border-right: 4px solid #222f5b !important; }
+        .border-Hufflepuff { border-right: 4px solid #f0c75e !important; }
+
+        /* Shimmer Loading Animation */
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .skeleton {
+            background: linear-gradient(90deg, #161b2a 25%, #242c44 50%, #161b2a 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.8s infinite;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-gold selection:text-black">
+
+    <header class="sticky top-0 z-40 bg-black/80 backdrop-blur-md border-b border-borderGold">
+        <div class="max-w-7xl mx-mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+                
+                <!-- Logo & Title -->
+                <div class="flex items-center space-x-3 space-x-reverse cursor-pointer" onclick="resetApp()">
+                    <div class="w-12 h-12 rounded-full bg-gradient-to-tr from-gold to-yellow-600 flex items-center justify-center shadow-lg shadow-gold/20">
+                        <i class="fa-solid fa-wand-magic-sparkles text-2xl text-black"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-magical text-2xl sm:text-3xl font-extrabold text-gold text-glow tracking-wider">
+                            WIZARD WORLD
+                        </h1>
+                        <p class="text-xs text-slate-400 font-light">אנציקלופדיית הכשפים, השיקויים והמכשפים ההוגוורטית</p>
+                    </div>
+                </div>
+
+                <!-- API Status & Favorite Quick View -->
+                <div class="flex items-center gap-3">
+                    <button id="favsToggleBtn" onclick="toggleFavoritesMode()" class="px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-500/10 text-gold border border-gold/30 hover:bg-gold hover:text-black transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-star text-amber-400"></i>
+                        <span>מועדפים (<span id="favCount">0</span>)</span>
+                    </button>
+                    <div id="apiBadge" class="px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span>API מחובר</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6 flex flex-col lg:flex-row items-center justify-between gap-4">
+                
+                <!-- Navigation Tabs -->
+                <nav class="flex items-center gap-2 overflow-x-auto w-full lg:w-auto pb-2 lg:pb-0 no-scrollbar" id="tabsNav">
+                    <button data-tab="spells" onclick="switchTab('spells')" class="tab-btn px-4 py-2 rounded-xl text-sm font-medium transition whitespace-nowrap bg-gold text-black font-bold shadow-md shadow-gold/20 flex items-center gap-2">
+                        <i class="fa-solid fa-hat-wizard"></i> כשפים (Spells)
+                    </button>
+                    <button data-tab="elixirs" onclick="switchTab('elixirs')" class="tab-btn px-4 py-2 rounded-xl text-sm font-medium transition whitespace-nowrap text-slate-300 hover:text-gold hover:bg-white/5 flex items-center gap-2">
+                        <i class="fa-solid fa-vial"></i> שיקויים (Elixirs)
+                    </button>
+                    <button data-tab="houses" onclick="switchTab('houses')" class="tab-btn px-4 py-2 rounded-xl text-sm font-medium transition whitespace-nowrap text-slate-300 hover:text-gold hover:bg-white/5 flex items-center gap-2">
+                        <i class="fa-solid fa-chess-rook"></i> בתים (Houses)
+                    </button>
+                    <button data-tab="wizards" onclick="switchTab('wizards')" class="tab-btn px-4 py-2 rounded-xl text-sm font-medium transition whitespace-nowrap text-slate-300 hover:text-gold hover:bg-white/5 flex items-center gap-2">
+                        <i class="fa-solid fa-user-ninja"></i> קוסמים (Wizards)
+                    </button>
+                    <button data-tab="ingredients" onclick="switchTab('ingredients')" class="tab-btn px-4 py-2 rounded-xl text-sm font-medium transition whitespace-nowrap text-slate-300 hover:text-gold hover:bg-white/5 flex items-center gap-2">
+                        <i class="fa-solid fa-seedling"></i> רכיבים (Ingredients)
+                    </button>
+                </nav>
+
+                <!-- Search and Filters Container -->
+                <div class="flex items-center gap-2 w-full lg:w-80">
+                    <div class="relative w-full">
+                        <i class="fa-solid fa-magnifying-glass absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                        <input type="text" id="searchInput" oninput="handleSearch()" placeholder="חפש לפי שם, השפעה, סוג..." class="w-full pl-3 pr-9 py-2 rounded-xl bg-slate-900/90 border border-slate-700 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition">
+                    </div>
+                    <select id="filterSelect" onchange="handleFilterChange()" class="py-2 px-3 rounded-xl bg-slate-900/90 border border-slate-700 text-sm text-slate-300 focus:outline-none focus:border-gold cursor-pointer hidden">
+                        <option value="ALL">הכל</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-grow w-full">
+        
+        <!-- Active Filter Indicator -->
+        <div id="resultsInfo" class="mb-6 flex items-center justify-between text-xs text-slate-400">
+            <div>מוצגות תוצאות עבור: <span id="currentCategoryTitle" class="text-gold font-bold">כשפים</span> (<span id="itemCount">0</span> פריטים)</div>
+            <button id="clearFiltersBtn" onclick="resetFilters()" class="hidden text-amber-400 hover:underline">נקה סינונים</button>
+        </div>
+
+        <!-- Skeleton Loader -->
+        <div id="skeletonGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div class="skeleton h-48 rounded-2xl"></div>
+            <div class="skeleton h-48 rounded-2xl"></div>
+            <div class="skeleton h-48 rounded-2xl"></div>
+            <div class="skeleton h-48 rounded-2xl"></div>
+            <div class="skeleton h-48 rounded-2xl"></div>
+            <div class="skeleton h-48 rounded-2xl"></div>
+            <div class="skeleton h-48 rounded-2xl"></div>
+            <div class="skeleton h-48 rounded-2xl"></div>
+        </div>
+
+        <!-- Content Grid Area -->
+        <div id="contentGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 hidden">
+            <!-- Cards will be dynamically injected here -->
+        </div>
+
+        <!-- Empty State Message -->
+        <div id="emptyState" class="hidden text-center py-20">
+            <div class="w-20 h-20 mx-auto mb-4 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-gold text-3xl">
+                <i class="fa-solid fa-feather-pointed"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-200 mb-1">לא נמצאו פריטים תואמים</h3>
+            <p class="text-sm text-slate-400 max-w-md mx-auto">נסה לשנות את מונח החיפוש או לבטול את המסננים שנבחרו.</p>
+            <button onclick="resetFilters()" class="mt-4 px-4 py-2 bg-gold/10 text-gold border border-gold/30 rounded-xl text-sm font-semibold hover:bg-gold hover:text-black transition">
+                אפס חיפוש
+            </button>
+        </div>
+    </main>
+
+    <div id="detailModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
+        <div class="magic-card w-full max-w-2xl rounded-2xl p-6 relative border-2 border-gold/40 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+            <button onclick="closeModal()" class="absolute top-4 left-4 w-9 h-9 rounded-full bg-slate-800/80 hover:bg-gold hover:text-black text-slate-300 transition flex items-center justify-center">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <div id="modalContent">
+                <!-- Modal details injected dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <footer class="border-t border-slate-800/80 bg-slate-950 py-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div>נבנה בעזרת ⚡ <span class="text-gold font-semibold">Wizard World API</span></div>
+            <div class="flex items-center gap-4">
+                <span>Hogwarts Archives © 2026</span>
+                <span>•</span>
+                <a href="https://wizard-world-api.herokuapp.com/swagger/index.html" target="_blank" class="text-slate-400 hover:text-gold transition">תיעוד API רשמי</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        const API_BASE = 'https://wizard-world-api.herokuapp.com';
+
+        const ENDPOINTS = {
+            spells: '/Spells',
+            elixirs: '/Elixirs',
+            houses: '/Houses',
+            wizards: '/Wizards',
+            ingredients: '/Ingredients'
+        };
+
+        const TITLES = {
+            spells: 'כשפים ולחשים',
+            elixirs: 'שיקויים ותרופות',
+            houses: 'בתי הוגוורטס',
+            wizards: 'קוסמים ומכשפות',
+            ingredients: 'רכיבי שיקויים'
+        };
+
+        // Fallback Mock Data in case the Heroku API is waking up or unavailable
+        const FALLBACK_DATA = {
+            spells: [
+                { id: '1', name: 'Accio', incantation: 'Accio', effect: 'מזמן חפצים אל המכשף ממרחק', type: 'Charm', light: 'None', canBeVerbal: true },
+                { id: '2', name: 'Alohomora', incantation: 'Alohomora', effect: 'פותח מנעולים ודלתות נעולות', type: 'Charm', light: 'Blue', canBeVerbal: true },
+                { id: '3', name: 'Avada Kedavra', incantation: 'Avada Kedavra', effect: 'קללת המוות - גורמת למות מיידי', type: 'UnforgivableCurse', light: 'Green', canBeVerbal: true },
+                { id: '4', name: 'Expecto Patronum', incantation: 'Expecto Patronum', effect: 'מזמן פטרונוס המרחיק סוהרסנים', type: 'Charm', light: 'Silver', canBeVerbal: true },
+                { id: '5', name: 'Expelliarmus', incantation: 'Expelliarmus', effect: 'מפריק את היריב מנשקו/שרביטו', type: 'Charm', light: 'Red', canBeVerbal: true },
+                { id: '6', name: 'Lumos', incantation: 'Lumos', effect: 'מציף אור בקצה השרביט', type: 'Charm', light: 'White', canBeVerbal: true },
+                { id: '7', name: 'Sectumsempra', incantation: 'Sectumsempra', effect: 'גורם לחתכים מדממים עמוקים', type: 'Spell', light: 'White', canBeVerbal: true },
+                { id: '8', name: 'Wingardium Leviosa', incantation: 'Wingardium Leviosa', effect: 'מרחיף חפצים באוויר', type: 'Charm', light: 'None', canBeVerbal: true }
+            ],
+            elixirs: [
+                { id: 'e1', name: 'Felix Felicis', effect: 'מעניק מזל מוחלט למשך זמן מוגבל', difficulty: 'Advanced', sideEffects: 'חוסר זהירות ויוהרה בשימוש מופרז', ingredients: [{ name: 'Ashwinder egg' }, { name: 'Squill bulb' }] },
+                { id: 'e2', name: 'Polyjuice Potion', effect: 'משנה את מראה השותה לדמות אדם אחר', difficulty: 'Advanced', sideEffects: 'שינוי צורה חלקי אם הוכנס שיער חיה', ingredients: [{ name: 'Lacewing flies' }, { name: 'Leeches' }, { name: 'Fluxweed' }] },
+                { id: 'e3', name: 'Amortentia', effect: 'שיקוי האהבה החזק ביותר בעולם', difficulty: 'Advanced', sideEffects: 'אובססיה קשה', ingredients: [{ name: 'Pearl dust' }] }
+            ],
+            houses: [
+                { id: 'h1', name: 'Gryffindor', founder: 'גודריק גריפינדור', houseColours: 'אדום וזהב', animal: 'אריה', element: 'אש', ghost: 'הניק כמעט-בלי-ראש', traits: [{ name: 'אומץ' }, { name: 'תושייה' }, { name: 'אבירות' }] },
+                { id: 'h2', name: 'Slytherin', founder: 'סלזאר סלית\'רין', houseColours: 'ירוק וכסף', animal: 'נחש', element: 'מים', ghost: 'הברונית המדממת', traits: [{ name: 'שאפתנות' }, { name: 'ערמומיות' }, { name: 'מנהיגות' }] },
+                { id: 'h3', name: 'Ravenclaw', founder: 'רוונה רייבנקלו', houseColours: 'כחול וברונזה', animal: 'עיט', element: 'אוויר', ghost: 'הגברת האפורה', traits: [{ name: 'חכמה' }, { name: 'למידה' }, { name: 'יצירתיות' }] },
+                { id: 'h4', name: 'Hufflepuff', founder: 'הלגה הפלפאף', houseColours: 'צהוב ושחור', animal: 'גירית', element: 'אדמה', ghost: 'הנזיר השמן', traits: [{ name: 'נאמנות' }, { name: 'חריצות' }, { name: 'הגינות' }] }
+            ],
+            wizards: [
+                { id: 'w1', firstName: 'Harry', lastName: 'Potter', elixirs: [] },
+                { id: 'w2', firstName: 'Albus', lastName: 'Dumbledore', elixirs: [] },
+                { id: 'w3', firstName: 'Severus', lastName: 'Snape', elixirs: [{ name: 'Elixir of Life' }] },
+                { id: 'w4', firstName: 'Hermione', lastName: 'Granger', elixirs: [] }
+            ],
+            ingredients: [
+                { id: 'i1', name: 'Boomslang skin' },
+                { id: 'i2', name: 'Dragon blood' },
+                { id: 'i3', name: 'Mandrake root' },
+                { id: 'i4', name: 'Unicorn hair' }
+            ]
+        };
+
+        // Application State
+        let state = {
+            currentTab: 'spells',
+            dataCache: {},
+            searchQuery: '',
+            filterValue: 'ALL',
+            favorites: JSON.parse(localStorage.getItem('hp_wizard_favs') || '[]'),
+            showOnlyFavs: false,
+            usingFallback: false
+        };
+
+        async function fetchCategoryData(category) {
+            if (state.dataCache[category]) {
+                return state.dataCache[category];
+            }
+
+            showLoading(true);
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 6000); // 6s timeout
+
+                const response = await fetch(`${API_BASE}${ENDPOINTS[category]}`, { signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                if (!response.ok) throw new Error('API request failed');
+                
+                const data = await response.json();
+                state.dataCache[category] = data;
+                updateApiStatus(true);
+                return data;
+            } catch (err) {
+                console.warn(`Could not load ${category} from API, utilizing magical fallback archives:`, err);
+                updateApiStatus(false);
+                state.usingFallback = true;
+                state.dataCache[category] = FALLBACK_DATA[category] || [];
+                return state.dataCache[category];
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function updateApiStatus(isOnline) {
+            const badge = document.getElementById('apiBadge');
+            if (isOnline) {
+                badge.className = 'px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5';
+                badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span>API מחובר</span>`;
+            } else {
+                badge.className = 'px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1.5';
+                badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span><span>ארכיון מקומי (Offline)</span>`;
+            }
+        }
+
+        async function switchTab(tabKey) {
+            state.currentTab = tabKey;
+            state.searchQuery = '';
+            state.filterValue = 'ALL';
+            state.showOnlyFavs = false;
+            
+            document.getElementById('searchInput').value = '';
+            document.getElementById('favsToggleBtn').classList.remove('bg-gold', 'text-black');
+
+            // Update tab buttons style
+            document.querySelectorAll('#tabsNav button').forEach(btn => {
+                const isSelected = btn.getAttribute('data-tab') === tabKey;
+                if (isSelected) {
+                    btn.className = 'tab-btn px-4 py-2 rounded-xl text-sm font-medium transition whitespace-nowrap bg-gold text-black font-bold shadow-md shadow-gold/20 flex items-center gap-2';
+                } else {
+                    btn.className = 'tab-btn px-4 py-2 rounded-xl text-sm font-medium transition whitespace-nowrap text-slate-300 hover:text-gold hover:bg-white/5 flex items-center gap-2';
+                }
+            });
+
+            document.getElementById('currentCategoryTitle').textContent = TITLES[tabKey];
+            setupFilterOptions(tabKey);
+            await renderGrid();
+        }
+
+        function setupFilterOptions(category) {
+            const select = document.getElementById('filterSelect');
+            select.innerHTML = '<option value="ALL">כל הסוגים</option>';
+
+            if (category === 'spells') {
+                select.classList.remove('hidden');
+                const types = ['Charm', 'Spell', 'Curse', 'Hex', 'Jinx', 'CounterSpell', 'Transfiguration'];
+                types.forEach(t => {
+                    select.innerHTML += `<option value="${t}">${t}</option>`;
+                });
+            } else if (category === 'elixirs') {
+                select.classList.remove('hidden');
+                const diffs = ['Unknown', 'Beginner', 'Moderate', 'Advanced', 'OrdinaryWizardingLevel'];
+                diffs.forEach(d => {
+                    select.innerHTML += `<option value="${d}">${d}</option>`;
+                });
+            } else {
+                select.classList.add('hidden');
+            }
+        }
+
+        async function renderGrid() {
+            const rawData = await fetchCategoryData(state.currentTab);
+            let items = [...rawData];
+
+            // Apply search query
+            if (state.searchQuery.trim() !== '') {
+                const q = state.searchQuery.toLowerCase();
+                items = items.filter(item => {
+                    const name = (item.name || item.incantation || '').toLowerCase();
+                    const effect = (item.effect || '').toLowerCase();
+                    const founder = (item.founder || '').toLowerCase();
+                    const firstName = (item.firstName || '').toLowerCase();
+                    const lastName = (item.lastName || '').toLowerCase();
+                    return name.includes(q) || effect.includes(q) || founder.includes(q) || firstName.includes(q) || lastName.includes(q);
+                });
+            }
+
+            // Apply filter selector
+            if (state.filterValue !== 'ALL') {
+                if (state.currentTab === 'spells') {
+                    items = items.filter(i => i.type === state.filterValue);
+                } else if (state.currentTab === 'elixirs') {
+                    items = items.filter(i => i.difficulty === state.filterValue);
+                }
+            }
+
+            // Apply Favorites filter if active
+            if (state.showOnlyFavs) {
+                items = items.filter(i => state.favorites.includes(i.id));
+            }
+
+            // Update counters
+            document.getElementById('itemCount').textContent = items.length;
+
+            const grid = document.getElementById('contentGrid');
+            const emptyState = document.getElementById('emptyState');
+
+            if (items.length === 0) {
+                grid.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+                return;
+            }
+
+            emptyState.classList.add('hidden');
+            grid.classList.remove('hidden');
+            grid.innerHTML = '';
+
+            // Render according to tab
+            items.forEach(item => {
+                const isFav = state.favorites.includes(item.id);
+                let cardHTML = '';
+
+                if (state.currentTab === 'spells') {
+                    cardHTML = createSpellCard(item, isFav);
+                } else if (state.currentTab === 'elixirs') {
+                    cardHTML = createElixirCard(item, isFav);
+                } else if (state.currentTab === 'houses') {
+                    cardHTML = createHouseCard(item, isFav);
+                } else if (state.currentTab === 'wizards') {
+                    cardHTML = createWizardCard(item, isFav);
+                } else if (state.currentTab === 'ingredients') {
+                    cardHTML = createIngredientCard(item, isFav);
+                }
+
+                grid.innerHTML += cardHTML;
+            });
+        }
+
+        function createSpellCard(spell, isFav) {
+            const incantation = spell.incantation || spell.name || 'ללא לחש קולי';
+            return `
+                <div class="magic-card rounded-2xl p-5 relative flex flex-col justify-between group cursor-pointer" onclick="openSpellModal('${spell.id}')">
+                    <div>
+                        <div class="flex items-start justify-between mb-3">
+                            <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500/10 text-gold border border-gold/30">
+                                ${spell.type || 'Spell'}
+                            </span>
+                            <button onclick="toggleFavorite(event, '${spell.id}')" class="text-slate-500 hover:text-amber-400 transition text-base">
+                                <i class="${isFav ? 'fa-solid text-amber-400' : 'fa-regular'} fa-star"></i>
+                            </button>
+                        </div>
+                        <h3 class="font-magical text-xl font-bold text-slate-100 group-hover:text-gold transition mb-1">
+                            ${incantation}
+                        </h3>
+                        ${spell.name && spell.name !== spell.incantation ? `<p class="text-xs text-slate-400 mb-2">(${spell.name})</p>` : ''}
+                        <p class="text-xs text-slate-300 leading-relaxed line-clamp-3">
+                            ${spell.effect || 'אין תיאור זמין להשפעת הלחש.'}
+                        </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                        <span>אור: <strong class="text-slate-200">${spell.light || 'ללא'}</strong></span>
+                        <span class="text-gold font-semibold group-hover:underline">לפרטים נוספים ✨</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function createElixirCard(elixir, isFav) {
+            const ingCount = elixir.ingredients ? elixir.ingredients.length : 0;
+            return `
+                <div class="magic-card rounded-2xl p-5 relative flex flex-col justify-between group cursor-pointer" onclick="openElixirModal('${elixir.id}')">
+                    <div>
+                        <div class="flex items-start justify-between mb-3">
+                            <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                ${elixir.difficulty || 'שיקוי קסום'}
+                            </span>
+                            <button onclick="toggleFavorite(event, '${elixir.id}')" class="text-slate-500 hover:text-amber-400 transition text-base">
+                                <i class="${isFav ? 'fa-solid text-amber-400' : 'fa-regular'} fa-star"></i>
+                            </button>
+                        </div>
+                        <h3 class="font-magical text-xl font-bold text-slate-100 group-hover:text-gold transition mb-2">
+                            ${elixir.name}
+                        </h3>
+                        <p class="text-xs text-slate-300 leading-relaxed line-clamp-2 mb-3">
+                            ${elixir.effect || 'אין מידע רשמי על השפעת השיקוי.'}
+                        </p>
+                    </div>
+                    <div class="mt-2 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                        <span>רכיבים: <strong class="text-emerald-300">${ingCount}</strong></span>
+                        <span class="text-gold font-semibold group-hover:underline">מתכון מלא 🧪</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function createHouseCard(house, isFav) {
+            const houseClass = `border-${house.name}`;
+            return `
+                <div class="magic-card ${houseClass} rounded-2xl p-5 relative flex flex-col justify-between group cursor-pointer" onclick="openHouseModal('${house.id}')">
+                    <div>
+                        <div class="flex items-start justify-between mb-3">
+                            <span class="text-2xl">
+                                ${house.name === 'Gryffindor' ? '🦁' : house.name === 'Slytherin' ? '🐍' : house.name === 'Ravenclaw' ? '🦅' : '🦡'}
+                            </span>
+                            <button onclick="toggleFavorite(event, '${house.id}')" class="text-slate-500 hover:text-amber-400 transition text-base">
+                                <i class="${isFav ? 'fa-solid text-amber-400' : 'fa-regular'} fa-star"></i>
+                            </button>
+                        </div>
+                        <h3 class="font-magical text-2xl font-black text-gold mb-1">
+                            ${house.name}
+                        </h3>
+                        <p class="text-xs text-slate-300 mb-3">מייסד/ת: <strong class="text-slate-100">${house.founder}</strong></p>
+                        
+                        <div class="space-y-1 text-xs text-slate-400">
+                            <div>צבעים: <span class="text-slate-200">${house.houseColours || 'לא ידוע'}</span></div>
+                            <div>חיה מייצגת: <span class="text-slate-200">${house.animal || 'לא ידוע'}</span></div>
+                            <div>רוח רפאים: <span class="text-slate-200">${house.ghost || 'לא ידוע'}</span></div>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-800 text-left">
+                        <span class="text-xs text-gold font-semibold group-hover:underline">חקור בית זה 🏰</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function createWizardCard(wizard, isFav) {
+            const fullName = `${wizard.firstName || ''} ${wizard.lastName || ''}`.trim() || 'קוסם אלמוני';
+            const elixirCount = wizard.elixirs ? wizard.elixirs.length : 0;
+            return `
+                <div class="magic-card rounded-2xl p-5 relative flex flex-col justify-between group">
+                    <div>
+                        <div class="flex items-start justify-between mb-3">
+                            <div class="w-10 h-10 rounded-full bg-slate-800 border border-gold/30 flex items-center justify-center text-gold">
+                                <i class="fa-solid fa-user-sparkles"></i>
+                            </div>
+                            <button onclick="toggleFavorite(event, '${wizard.id}')" class="text-slate-500 hover:text-amber-400 transition text-base">
+                                <i class="${isFav ? 'fa-solid text-amber-400' : 'fa-regular'} fa-star"></i>
+                            </button>
+                        </div>
+                        <h3 class="font-magical text-lg font-bold text-slate-100 mb-2">
+                            ${fullName}
+                        </h3>
+                        <p class="text-xs text-slate-400">
+                            שיקויים משויכים: <strong class="text-gold">${elixirCount}</strong>
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+
+        function createIngredientCard(ing, isFav) {
+            return `
+                <div class="magic-card rounded-2xl p-4 flex items-center justify-between group">
+                    <div class="flex items-center gap-3">
+                        <div class="w-9 h-9 rounded-xl bg-emerald-950/60 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-sm">
+                            🌿
+                        </div>
+                        <span class="font-semibold text-sm text-slate-200 group-hover:text-gold transition">
+                            ${ing.name}
+                        </span>
+                    </div>
+                    <button onclick="toggleFavorite(event, '${ing.id}')" class="text-slate-500 hover:text-amber-400 transition text-sm">
+                        <i class="${isFav ? 'fa-solid text-amber-400' : 'fa-regular'} fa-star"></i>
+                    </button>
+                </div>
+            `;
+        }
+
+        function openSpellModal(id) {
+            const list = state.dataCache['spells'] || [];
+            const spell = list.find(s => s.id === id);
+            if (!spell) return;
+
+            const modalContent = document.getElementById('modalContent');
+            modalContent.innerHTML = `
+                <div class="text-center mb-6">
+                    <span class="px-3 py-1 rounded-full text-xs font-bold bg-gold/10 text-gold border border-gold/30 inline-block mb-3">
+                        ${spell.type || 'Spell'}
+                    </span>
+                    <h2 class="font-magical text-3xl font-black text-gold text-glow mb-1">${spell.incantation || spell.name}</h2>
+                    ${spell.name && spell.name !== spell.incantation ? `<p class="text-sm text-slate-400">שם רשמי: ${spell.name}</p>` : ''}
+                </div>
+
+                <div class="space-y-4 text-sm text-slate-200">
+                    <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
+                        <h4 class="text-xs text-gold font-bold uppercase mb-1">השפעת הלחש</h4>
+                        <p class="leading-relaxed">${spell.effect || 'אין תיאור מפורט היסטורי.'}</p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 text-xs">
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block mb-1">אור הנפלט</span>
+                            <span class="font-bold text-slate-100">${spell.light || 'ללא / לא צוין'}</span>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block mb-1">דורש מילים קוליות</span>
+                            <span class="font-bold text-slate-100">${spell.canBeVerbal === false ? 'לא (לחש אילם)' : 'כן'}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            showModal(true);
+        }
+
+        function openElixirModal(id) {
+            const list = state.dataCache['elixirs'] || [];
+            const elixir = list.find(e => e.id === id);
+            if (!elixir) return;
+
+            const ingredientsHTML = elixir.ingredients && elixir.ingredients.length > 0
+                ? elixir.ingredients.map(ing => `<span class="px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 text-xs">${ing.name}</span>`).join(' ')
+                : '<span class="text-xs text-slate-500">אין רכיבים רשומים ספציפית.</span>';
+
+            const modalContent = document.getElementById('modalContent');
+            modalContent.innerHTML = `
+                <div class="text-center mb-6">
+                    <span class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 inline-block mb-3">
+                        רמת קושי: ${elixir.difficulty || 'שיקוי רגיל'}
+                    </span>
+                    <h2 class="font-magical text-3xl font-black text-emerald-400 mb-1">${elixir.name}</h2>
+                </div>
+
+                <div class="space-y-4 text-sm text-slate-200">
+                    <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
+                        <h4 class="text-xs text-emerald-400 font-bold uppercase mb-1">השפעה וסגולות</h4>
+                        <p class="leading-relaxed">${elixir.effect || 'לא צוינה השפעה פומבית.'}</p>
+                    </div>
+
+                    ${elixir.sideEffects ? `
+                    <div class="bg-amber-950/30 p-4 rounded-xl border border-amber-500/30">
+                        <h4 class="text-xs text-amber-400 font-bold uppercase mb-1">תופעות לוואי ואזהרות</h4>
+                        <p class="text-xs text-amber-200/90 leading-relaxed">${elixir.sideEffects}</p>
+                    </div>` : ''}
+
+                    <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
+                        <h4 class="text-xs text-slate-400 font-bold uppercase mb-2">רכיבים נדרשים לרוקח</h4>
+                        <div class="flex flex-wrap gap-2">
+                            ${ingredientsHTML}
+                        </div>
+                    </div>
+                </div>
+            `;
+            showModal(true);
+        }
+
+        function openHouseModal(id) {
+            const list = state.dataCache['houses'] || [];
+            const house = list.find(h => h.id === id);
+            if (!house) return;
+
+            const traitsHTML = house.traits && house.traits.length > 0
+                ? house.traits.map(t => `<span class="px-2.5 py-1 rounded-lg bg-gold/10 border border-gold/30 text-gold text-xs">${t.name}</span>`).join(' ')
+                : '';
+
+            const modalContent = document.getElementById('modalContent');
+            modalContent.innerHTML = `
+                <div class="text-center mb-6">
+                    <h2 class="font-magical text-4xl font-black text-gold text-glow mb-1">${house.name}</h2>
+                    <p class="text-sm text-slate-300">מייסד/ת: ${house.founder}</p>
+                </div>
+
+                <div class="space-y-3 text-sm text-slate-200">
+                    <div class="grid grid-cols-2 gap-3 text-xs">
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block">צבעים</span>
+                            <span class="font-bold text-slate-100">${house.houseColours || 'לא ידוע'}</span>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block">סמל חיה</span>
+                            <span class="font-bold text-slate-100">${house.animal || 'לא ידוע'}</span>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block">אלמנט</span>
+                            <span class="font-bold text-slate-100">${house.element || 'לא ידוע'}</span>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block">רוח רפאים</span>
+                            <span class="font-bold text-slate-100">${house.ghost || 'לא ידוע'}</span>
+                        </div>
+                    </div>
+
+                    ${traitsHTML ? `
+                    <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
+                        <h4 class="text-xs text-gold font-bold uppercase mb-2">תכונות מאפיינות</h4>
+                        <div class="flex flex-wrap gap-2">${traitsHTML}</div>
+                    </div>` : ''}
+                </div>
+            `;
+            showModal(true);
+        }
+
+        function showModal(visible) {
+            const modal = document.getElementById('detailModal');
+            if (visible) {
+                modal.classList.remove('opacity-0', 'pointer-events-none');
+            } else {
+                modal.classList.add('opacity-0', 'pointer-events-none');
+            }
+        }
+
+        function closeModal() {
+            showModal(false);
+        }
+
+        document.getElementById('detailModal').addEventListener('click', () => {
+            closeModal();
+        });
+
+        function toggleFavorite(e, id) {
+            e.stopPropagation();
+            const index = state.favorites.indexOf(id);
+            if (index > -1) {
+                state.favorites.splice(index, 1);
+            } else {
+                state.favorites.push(id);
+            }
+            localStorage.setItem('hp_wizard_favs', JSON.stringify(state.favorites));
+            document.getElementById('favCount').textContent = state.favorites.length;
+            renderGrid();
+        }
+
+        function toggleFavoritesMode() {
+            state.showOnlyFavs = !state.showOnlyFavs;
+            const btn = document.getElementById('favsToggleBtn');
+            if (state.showOnlyFavs) {
+                btn.classList.add('bg-gold', 'text-black');
+            } else {
+                btn.classList.remove('bg-gold', 'text-black');
+            }
+            renderGrid();
+        }
+
+        function handleSearch() {
+            state.searchQuery = document.getElementById('searchInput').value;
+            renderGrid();
+        }
+
+        function handleFilterChange() {
+            state.filterValue = document.getElementById('filterSelect').value;
+            renderGrid();
+        }
+
+        function resetFilters() {
+            state.searchQuery = '';
+            state.filterValue = 'ALL';
+            document.getElementById('searchInput').value = '';
+            const select = document.getElementById('filterSelect');
+            if (select) select.value = 'ALL';
+            renderGrid();
+        }
+
+        function resetApp() {
+            resetFilters();
+            switchTab('spells');
+        }
+
+        function showLoading(isLoading) {
+            const skeleton = document.getElementById('skeletonGrid');
+            const grid = document.getElementById('contentGrid');
+            const emptyState = document.getElementById('emptyState');
+
+            if (isLoading) {
+                skeleton.classList.remove('hidden');
+                grid.classList.add('hidden');
+                emptyState.classList.add('hidden');
+            } else {
+                skeleton.classList.add('hidden');
+            }
+        }
+
+        // Initialize App on DOM Load
+        window.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('favCount').textContent = state.favorites.length;
+            switchTab('spells');
+        });
+    </script>
+</body>
+</html>
