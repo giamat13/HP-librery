@@ -18,6 +18,7 @@ import {
   bestMatches,
   clean,
   facts,
+  slugify,
   list,
   norm,
   pageFooter,
@@ -275,6 +276,138 @@ export function createServer(): McpServer {
         .join("\n");
       return card(`## 🌳 ${a.name} — family\n${md}\n\n_† = deceased · Source: ${SRC_PDB}_`, {
         kind: "family", name: a.name, image: a.image, house: clean(a.house), groups, sources: SRC_PDB,
+        tree: { name: "family_tree", arguments: { name_or_slug: a.slug } },
+      });
+    }),
+  );
+
+  // How a relation word places someone relative to the person it is read from: generation offset + link kind.
+  function relInfo(rel: string): { gen: number; kind: "parent" | "partner" | "child" | "sibling" | "other" } {
+    const great = (rel.match(/great/g) ?? []).length;
+    if (/in-law|by marriage/.test(rel)) return { gen: /^(father|mother|parent)/.test(rel) ? -1 : /^(son|daughter|child)/.test(rel) ? 1 : 0, kind: "other" };
+    if (/grand/.test(rel)) return { gen: /(son|daughter|child)/.test(rel) ? 2 + great : -(2 + great), kind: "other" };
+    if (/ancestor/.test(rel)) return { gen: -3, kind: "other" };
+    if (/^(step-?|adoptive |foster )?(father|mother|parent)/.test(rel)) return { gen: -1, kind: "parent" };
+    if (/^(wife|husband|spouse|partner|ex-|fianc|girlfriend|boyfriend|widow)/.test(rel)) return { gen: 0, kind: "partner" };
+    if (/^(step-?|adoptive |foster )?(son|daughter|child)/.test(rel)) return { gen: 1, kind: "child" };
+    if (/^(step-?|half-?)?(brother|sister|sibling|twin)/.test(rel)) return { gen: 0, kind: "sibling" };
+    if (/aunt|uncle/.test(rel)) return { gen: -1, kind: "other" };
+    if (/niece|nephew/.test(rel)) return { gen: 1, kind: "other" };
+    return { gen: 0, kind: "other" };
+  }
+  const genLabel = (g: number) =>
+    g < -3 ? "Earlier ancestors" : ({ "-3": "Ancestors", "-2": "Grandparents", "-1": "Parents' generation", "0": "Same generation", "1": "Children's generation", "2": "Grandchildren" } as Record<string, string>)[String(g)] ?? "Descendants";
+
+  server.registerTool(
+    "family_tree",
+    {
+      title: "🕸️ Family Tree",
+      description:
+        "Full graphical family tree of one character: ancestors on top, descendants below, partners linked, and (depth 2) the families of the closest relatives merged in. Click a name in the card to open that profile.",
+      inputSchema: {
+        name_or_slug: q("Name or slug, e.g. 'Harry Potter'."),
+        depth: z.number().int().min(1).max(2).default(2).describe("1 = only the character's own recorded relatives; 2 (default) also merges in the families of parents, partner, children and siblings."),
+      },
+      annotations: { title: "Family Tree", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ name_or_slug, depth }: any) => {
+      const r = await pdbResolve("characters", name_or_slug);
+      if (!r.item) return didYouMean("character", name_or_slug, r.suggestions, "family_tree");
+      const a = attrs(r.item);
+      if (!a.family_members?.length) return text(`🌳 No family members recorded for **${a.name}**.\n\n_Source: ${SRC_PDB}_`);
+
+      type N = { id: string; name: string; gen: number; dead?: boolean; house?: unknown; slug?: string; center?: boolean };
+      const MAX = 70;
+      const nodes = new Map<string, N>();
+      const edges = new Map<string, [string, string, string]>(); // p = parent->child, m = partners, x = loose link
+      const edge = (x: string, y: string, t: string) => {
+        const k = t === "m" ? `${[x, y].sort().join("|")}m` : `${x}|${y}${t}`;
+        if (!edges.has(k)) edges.set(k, [x, y, t]);
+      };
+      const center: N = { id: norm(a.name), name: String(a.name), gen: 0, dead: !!a.died, house: clean(a.house), slug: a.slug, center: true };
+      nodes.set(center.id, center);
+
+      const addFrom = (owner: N, rels: string[]) => {
+        const sibs: string[] = [];
+        const kinds = new Map<string, string>();
+        for (const raw of rels) {
+          const p = parseRelative(String(raw));
+          const id = norm(p.name);
+          if (!id || id === owner.id) continue;
+          // placeholders like "Father-in-law", "Two paternal uncles", "Possible paternal relative"
+          if (/^(father|mother|paternal|maternal|possible|unnamed|unknown|two|three|several|grandfather|grandmother|brother|sister|son|daughter)\b|in law$/.test(id)) continue;
+          const info = relInfo(p.relation);
+          let n = nodes.get(id);
+          if (!n) {
+            if (nodes.size >= MAX) continue;
+            n = { id, name: p.name, gen: owner.gen + info.gen, dead: p.dead };
+            nodes.set(id, n);
+          }
+          if (info.kind === "parent") edge(id, owner.id, "p");
+          else if (info.kind === "child") edge(owner.id, id, "p");
+          else if (info.kind === "partner") edge(id, owner.id, "m");
+          else if (info.kind === "sibling") sibs.push(id);
+          if (!kinds.has(id)) kinds.set(id, info.kind);
+        }
+        const ps = [...edges.values()].filter((e) => e[2] === "p" && e[1] === owner.id).map((e) => e[0]);
+        for (const s of sibs) for (const pp of ps) edge(pp, s, "p");
+        return kinds;
+      };
+
+      const kinds = addFrom(center, a.family_members);
+      const expanded: string[] = [];
+      if (depth > 1) {
+        const order = ["parent", "partner", "child", "sibling"];
+        const targets = [...kinds.entries()]
+          .filter(([, k]) => order.includes(k))
+          .sort((x, y) => order.indexOf(x[1]) - order.indexOf(y[1]))
+          .slice(0, 10)
+          .map(([id]) => nodes.get(id)!);
+        // Exact slug first; otherwise a name search, accepting only a close name whose own family mentions the centre.
+        const cw = norm(center.name).split(" ");
+        const mentionsCenter = (i: PdbItem) => {
+          const t = ` ${norm((attrs(i).family_members ?? []).join(" "))} `;
+          return t.includes(` ${cw[0]} `) && t.includes(` ${cw[cw.length - 1]} `);
+        };
+        const load = async (n: N) => {
+          const hit = await pdbBySlug("characters", slugify(n.name));
+          if (hit) return hit;
+          for (const term of [n.name, n.name.split(" ")[0]]) {
+            const page = await pdbList("characters", { name_cont: term }, { size: 25, sort: "name" });
+            const best = page.items
+              .filter((i) => {
+                const s = similarity(n.name, String(attrs(i).name));
+                return s >= 0.97 || (s >= 0.75 && mentionsCenter(i));
+              })
+              .sort((x, y) => similarity(n.name, String(attrs(y).name)) - similarity(n.name, String(attrs(x).name)))[0];
+            if (best) return best;
+          }
+          return undefined;
+        };
+        const got = await Promise.allSettled(targets.map(load));
+        got.forEach((res, i) => {
+          if (res.status !== "fulfilled" || !res.value) return;
+          const b = attrs(res.value);
+          const n = targets[i];
+          n.house = clean(b.house);
+          n.slug = b.slug;
+          if (b.died) n.dead = true;
+          addFrom(n, b.family_members ?? []);
+          expanded.push(n.name);
+        });
+      }
+
+      const byGen = new Map<number, string[]>();
+      for (const n of nodes.values()) byGen.set(n.gen, [...(byGen.get(n.gen) ?? []), `${n.dead ? "† " : ""}${n.name}`]);
+      const md = [...byGen.entries()]
+        .sort((x, y) => x[0] - y[0])
+        .map(([g, names]) => `**${genLabel(g)}:** ${names.slice(0, 14).join(", ")}${names.length > 14 ? ` … +${names.length - 14} more` : ""}`)
+        .join("\n");
+      const note = `${nodes.size} people${nodes.size >= MAX ? ` (capped at ${MAX})` : ""}${expanded.length ? ` · merged families of ${expanded.join(", ")}` : ""}`;
+      return card(`## 🕸️ ${a.name} — family tree\n${md}\n\n_${note} · † = deceased · Source: ${SRC_PDB}_`, {
+        kind: "tree", name: a.name, image: a.image, house: clean(a.house), centerId: center.id, note, sources: SRC_PDB,
+        nodes: [...nodes.values()], edges: [...edges.values()],
       });
     }),
   );
