@@ -7,6 +7,7 @@ import {
   pdbBySlug,
   pdbList,
   pdbResolve,
+  pdbSpecies,
   pdbTotal,
   ww,
   PDB,
@@ -188,6 +189,49 @@ export function createServer(): McpServer {
           call: { name: "get_character", arguments: { name_or_slug: attrs(i).slug } },
         })),
         nav: { name: "search_characters", arguments: { query, house, species, blood_status, limit }, page, pages: Math.ceil(res.total / limit) },
+      });
+    }),
+  );
+
+  const CREATURE_ICONS: [RegExp, string][] = [
+    [/horntail|ridgeback|fireball|welsh green|hebridean|opaleye|dragon|wyvern/i, "🐉"], [/goblin/i, "👺"], [/house-elf/i, "🧝"], [/owl/i, "🦉"],
+    [/ghost|poltergeist|banshee/i, "👻"], [/giant|troll/i, "🗿"], [/centaur|thestral|unicorn/i, "🐴"], [/hippogriff|griffin|augurey|phoenix/i, "🦅"],
+    [/cat|kneazle/i, "🐈"], [/dog|crup|bloodhound/i, "🐕"], [/vampire/i, "🧛"], [/werewolf/i, "🐺"], [/toad|frog/i, "🐸"], [/rabbit/i, "🐇"],
+    [/fairy|veela/i, "🧚"], [/squid|kraken/i, "🦑"], [/acromantula|spider/i, "🕷️"], [/serpent|basilisk|snake/i, "🐍"], [/peacock/i, "🦚"], [/selkie|merpeople|kelpie/i, "🧜"],
+  ];
+  const creatureIcon = (s: string) => CREATURE_ICONS.find(([re]) => re.test(s))?.[1] ?? "🐾";
+
+  server.registerTool(
+    "list_creatures",
+    {
+      title: "🐉 List Creatures",
+      description:
+        "General list of magical creatures and non-human species in PotterDB (goblins, house-elves, dragons, hippogriffs, centaurs…) with how many known characters each has. Click a species to see its members (search_characters with the species filter).",
+      inputSchema: {
+        query: optQ("Part of a species name, e.g. 'dragon', 'elf', 'owl'. Leave empty to list all."),
+        include_humans: z.boolean().default(false).describe("Also list plain 'Human' (off by default)."),
+        limit: limitSchema,
+        page: pageSchema,
+      },
+      annotations: { title: "List Creatures", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ query, include_humans, limit, page }: any) => {
+      const all = await pdbSpecies();
+      const rows = all.filter((r) => (include_humans || !/^humans?$/i.test(r.species)) && (!query || norm(r.species).includes(norm(query))));
+      if (!rows.length) return text(`🔍 No species match **"${query}"**. Call \`list_creatures\` without a query to see all.\n\n_Source: ${SRC_PDB}_`);
+      const pages = Math.max(1, Math.ceil(rows.length / limit));
+      const pg = Math.min(page, pages);
+      const slice = rows.slice((pg - 1) * limit, pg * limit);
+      const body = slice.map((r) => `- ${creatureIcon(r.species)} **${r.species}** — ${r.count} character${r.count === 1 ? "" : "s"} (e.g. ${r.sample})`).join("\n");
+      return card(`## 🐉 Creatures & species (${rows.length})\n${body}${pageFooter(rows.length, slice.length, pg, limit, "list_creatures")}\n_Use search_characters with \`species\` to list the members. Source: ${SRC_PDB}_`, {
+        kind: "list", title: "Creatures & species", sub: `${rows.length} species`, total: rows.length, sources: SRC_PDB,
+        items: slice.map((r) => ({
+          title: r.species, image: r.image, icon: creatureIcon(r.species),
+          sub: `${r.count} character${r.count === 1 ? "" : "s"} · e.g. ${r.sample}`,
+          call: { name: "search_characters", arguments: { species: r.species, limit: 10 } },
+        })),
+        nav: { name: "list_creatures", arguments: { query, include_humans, limit }, page: pg, pages },
       });
     }),
   );

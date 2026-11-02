@@ -47,6 +47,41 @@ export async function pdbList(
   };
 }
 
+export interface SpeciesRow {
+  species: string;
+  count: number;
+  sample: string;
+  image?: string;
+}
+let speciesCache: { at: number; rows: SpeciesRow[] } | undefined;
+
+/** Every species recorded on PotterDB characters, with counts and a sample (scans all character pages once per hour). */
+export async function pdbSpecies(): Promise<SpeciesRow[]> {
+  if (speciesCache && Date.now() - speciesCache.at < 3_600_000) return speciesCache.rows;
+  const rows = new Map<string, SpeciesRow>();
+  const add = (items: PdbItem[]) => {
+    for (const i of items) {
+      const raw = String(i.attributes.species ?? "").trim();
+      if (!raw) continue;
+      const species = raw === "House-elves" ? "House-elf" : raw;
+      const r = rows.get(species) ?? { species, count: 0, sample: String(i.attributes.name ?? "") };
+      r.count++;
+      if (!r.image && i.attributes.image) r.image = i.attributes.image;
+      rows.set(species, r);
+    }
+  };
+  const first = await pdbList("characters", {}, { size: 100, page: 1 });
+  add(first.items);
+  const pages = Array.from({ length: Math.max(0, first.pages - 1) }, (_, i) => i + 2);
+  for (let i = 0; i < pages.length; i += 8) {
+    const batch = await Promise.all(pages.slice(i, i + 8).map((p) => pdbList("characters", {}, { size: 100, page: p })));
+    batch.forEach((b) => add(b.items));
+  }
+  const out = [...rows.values()].sort((a, b) => b.count - a.count || a.species.localeCompare(b.species));
+  speciesCache = { at: Date.now(), rows: out };
+  return out;
+}
+
 export async function pdbBySlug(resource: string, slug: string): Promise<PdbItem | undefined> {
   try {
     const json = await getJson<any>(`${PDB}/${resource}/${encodeURIComponent(slug)}`, SRC_PDB);

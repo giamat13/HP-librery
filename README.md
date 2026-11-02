@@ -20,6 +20,7 @@ Data comes from [PotterDB](https://docs.potterdb.com) (primary) and the
 | `compare_characters` | Side-by-side table of two characters |
 | `character_family` | Family of one character grouped by relation (parents, partner, children, in-laws…) |
 | `family_tree` | Full graphical family tree (SVG card): ancestors on top, descendants below, partners linked, close relatives' own families merged in |
+| `list_creatures` | General list of creatures / non-human species with character counts (paginated, searchable); click a species to see its members |
 | `search_spells` | Search spells by name, category, incantation, words in the effect |
 | `get_spell` | One spell merged from both sources, showing which source gave each field (also finds spells by incantation, e.g. "Expelliarmus") |
 | `random_spell` | Random spell, optionally by category |
