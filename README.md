@@ -21,6 +21,13 @@ Data comes from [PotterDB](https://docs.potterdb.com) (primary) and the
 | `character_family` | Family of one character grouped by relation (parents, partner, children, in-laws…) |
 | `family_tree` | Full graphical family tree (SVG card): ancestors on top, descendants below, partners linked, close relatives' own families merged in |
 | `list_creatures` | General list of creatures / non-human species with character counts (paginated, searchable); click a species to see its members |
+| `search_all` | One search across characters, spells, potions, books, chapters and movies, grouped by type |
+| `today_in_wizarding_world` | Characters born/died on a day, books/films released on it, story events and cast birthdays (default today) |
+| `hp_news` | Live Harry Potter headlines from Google News (HBO series, casting, new projects) |
+| `cast_birthdays` | Film/series cast born on a given day, from Wikidata |
+| `next_releases` | Upcoming Harry Potter releases with days remaining, from Wikidata |
+| `book_editions` | Editions, ratings and translations of the books, from Open Library |
+| `galleon_converter` | Real prices (ILS/USD/GBP/EUR) to Galleons, Sickles and Knuts at a live rate (the Galleon's value is a fan convention, overridable) |
 | `search_spells` | Search spells by name, category, incantation, words in the effect |
 | `get_spell` | One spell merged from both sources, showing which source gave each field (also finds spells by incantation, e.g. "Expelliarmus") |
 | `random_spell` | Random spell, optionally by category |

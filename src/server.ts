@@ -27,6 +27,7 @@ import {
   table,
   truncate,
 } from "./lib/text.js";
+import { CastBirthday, SRC_FX, SRC_NEWS, SRC_OL, SRC_WD, castBirthdays, fxRate, latestNews, openLibraryWorks, upcomingReleases } from "./lib/live.js";
 import { ICON_DATA_URI } from "./icon.js";
 import { VIEW_CSP, VIEW_HTML, VIEW_MIME, VIEW_URI } from "./view.js";
 
@@ -939,6 +940,247 @@ export function createServer(): McpServer {
           links: [m.trailer ? { label: "Trailer", url: m.trailer } : undefined, m.wiki ? { label: "Wiki", url: m.wiki } : undefined].filter(Boolean),
         },
       );
+    }),
+  );
+
+  // ---- cross-resource search ----
+  server.registerTool(
+    "search_all",
+    {
+      title: "🔮 Search Everything",
+      description: "One search across characters, spells, potions, books, chapters and movies, instead of calling each search tool separately. Results are grouped by type; click one to open it.",
+      inputSchema: { query: q("Word or name, e.g. 'phoenix' or 'Black'."), limit_each: z.number().int().min(1).max(10).default(4).describe("Max results per type (1-10, default 4).") },
+      annotations: { title: "Search Everything", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ query, limit_each }: any) => {
+      const nq = norm(query);
+      const [chars, spells, potions, books, movies] = await Promise.all([
+        pdbList("characters", { name_cont: query }, { size: limit_each, sort: "name" }),
+        pdbList("spells", { name_cont: query }, { size: limit_each, sort: "name" }),
+        pdbList("potions", { name_cont: query }, { size: limit_each, sort: "name" }),
+        allBooks(),
+        allMovies(),
+      ]);
+      const bookHits = books.map((b, i) => ({ b, i })).filter(({ b }) => norm(`${attrs(b).title} ${attrs(b).summary}`).includes(nq)).slice(0, limit_each);
+      const movieHits = movies.map((m, i) => ({ m, i })).filter(({ m }) => norm(`${attrs(m).title} ${attrs(m).summary}`).includes(nq)).slice(0, limit_each);
+      const chapterLists = await Promise.all(books.map(async (b, i) => (await getChapters(b.id)).map((c) => ({ b, i, c }))));
+      const allChapters = chapterLists.flat().filter(({ c }) => norm(`${attrs(c).title} ${attrs(c).summary}`).includes(nq));
+      const chapterHits = allChapters.slice(0, limit_each);
+
+      const items: Record<string, unknown>[] = [
+        ...chars.items.map((i) => ({
+          section: `Characters (${chars.total})`, title: attrs(i).name, image: attrs(i).image, icon: "🧙",
+          sub: [clean(attrs(i).house), clean(attrs(i).species)].filter(Boolean).join(" · "),
+          call: { name: "get_character", arguments: { name_or_slug: attrs(i).slug } },
+        })),
+        ...spells.items.map((i) => ({
+          section: `Spells (${spells.total})`, title: attrs(i).name, image: attrs(i).image, icon: "✨",
+          sub: truncate(String(clean(attrs(i).effect) ?? ""), 80),
+          call: { name: "get_spell", arguments: { name_or_slug: attrs(i).slug } },
+        })),
+        ...potions.items.map((i) => ({
+          section: `Potions (${potions.total})`, title: attrs(i).name, image: attrs(i).image, icon: "🧪",
+          sub: truncate(String(clean(attrs(i).effect) ?? ""), 80),
+          call: { name: "get_potion", arguments: { name_or_slug: attrs(i).slug } },
+        })),
+        ...bookHits.map(({ b, i }) => ({
+          section: "Books", title: attrs(b).title, image: attrs(b).cover, icon: "📚", sub: attrs(b).release_date,
+          call: { name: "get_book", arguments: { title_or_number: String(i + 1) } },
+        })),
+        ...chapterHits.map(({ b, i, c }) => ({
+          section: `Chapters (${allChapters.length})`, title: `${attrs(c).order}. ${attrs(c).title}`, icon: "📖", sub: attrs(b).title,
+          call: { name: "get_book", arguments: { title_or_number: String(i + 1) } },
+        })),
+        ...movieHits.map(({ m, i }) => ({
+          section: "Movies", title: attrs(m).title, image: attrs(m).poster, icon: "🎬", sub: attrs(m).release_date,
+          call: { name: "get_movie", arguments: { title_or_number: String(i + 1) } },
+        })),
+      ];
+      if (!items.length) return text(`🔍 Nothing matched "${query}" in characters, spells, potions, books, chapters or movies.\n\n_Source: ${SRC_PDB}_`);
+      const lines = items.map((it) => `- [${String(it.section).replace(/ \(.*\)/, "")}] **${it.title}**${it.sub ? ` — ${it.sub}` : ""} → \`${(it.call as Call).name}\` ${JSON.stringify((it.call as Call).arguments)}`);
+      return card(`## 🔮 "${query}" — ${items.length} results\n${lines.join("\n")}\n\n_Source: ${SRC_PDB}_`, {
+        kind: "list", title: `"${query}"`, sub: `${items.length} shown across all types`, sources: SRC_PDB, items,
+      });
+    }),
+  );
+
+  // ---- today in the wizarding world ----
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  // Well-known story dates (canon, from the books).
+  const STORY_EVENTS: Record<string, string> = {
+    "07-31": "Harry Potter is born (1980); Hagrid delivers his Hogwarts letter on his 11th birthday (1991).",
+    "09-01": "The Hogwarts Express leaves King's Cross at 11:00 and the school year begins; also the date of the epilogue (2017).",
+    "10-31": "Halloween: Voldemort attacks Godric's Hollow (1981); a troll is let into Hogwarts (1991).",
+    "05-02": "The Battle of Hogwarts and the fall of Voldemort (1998).",
+    "06-24": "The Third Task of the Triwizard Tournament, and Cedric Diggory's death (1995).",
+  };
+
+  server.registerTool(
+    "today_in_wizarding_world",
+    {
+      title: "📅 Today in the Wizarding World",
+      description:
+        "What happens on a calendar day in the wizarding world: characters born or died on it, books/films released on it, famous story events, and cast members with a real-world birthday. Defaults to today (UTC); pass `date` as MM-DD or YYYY-MM-DD for another day.",
+      inputSchema: { date: optQ("Optional day as 'MM-DD' or 'YYYY-MM-DD'. Default: today.") },
+      annotations: { title: "Today in the Wizarding World", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ date }: any) => {
+      const m = /^(?:\d{4}-)?(\d{1,2})-(\d{1,2})$/.exec(String(date ?? "").trim());
+      const now = new Date();
+      const month = m ? Number(m[1]) : now.getUTCMonth() + 1;
+      const day = m ? Number(m[2]) : now.getUTCDate();
+      if (month < 1 || month > 12 || day < 1 || day > 31) return fail("⚠️ Invalid date. Use MM-DD or YYYY-MM-DD.");
+      const mmdd = `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const dm = `${day} ${MONTHS[month - 1]}`;
+      const startsWithDay = (v: unknown) => typeof v === "string" && new RegExp(`^(?:c\\. ?)?${day} ${MONTHS[month - 1]}\\b`, "i").test(v.trim());
+
+      const [born, died, books, movies, cast] = await Promise.all([
+        pdbList("characters", { born_cont: dm }, { size: 100 }),
+        pdbList("characters", { died_cont: dm }, { size: 100 }),
+        allBooks(),
+        allMovies(),
+        castBirthdays(month, day).catch(() => [] as CastBirthday[]),
+      ]);
+      const year = (v: unknown) => /\b(\d{4})\b/.exec(String(v))?.[1];
+      const items: Record<string, unknown>[] = [];
+      const ev = STORY_EVENTS[mmdd];
+      if (ev) items.push({ section: "Story events", title: ev, icon: "📜" });
+      for (const c of born.items.filter((c) => startsWithDay(attrs(c).born)))
+        items.push({ section: "Born today", title: attrs(c).name, image: attrs(c).image, icon: "🎂", sub: [year(attrs(c).born), clean(attrs(c).house)].filter(Boolean).join(" · "), call: { name: "get_character", arguments: { name_or_slug: attrs(c).slug } } });
+      for (const c of died.items.filter((c) => startsWithDay(attrs(c).died)))
+        items.push({ section: "Died today", title: attrs(c).name, image: attrs(c).image, icon: "🕯️", sub: [year(attrs(c).died), clean(attrs(c).house)].filter(Boolean).join(" · "), call: { name: "get_character", arguments: { name_or_slug: attrs(c).slug } } });
+      books.forEach((b, i) => { if (String(attrs(b).release_date).slice(5) === mmdd) items.push({ section: "Released today", title: attrs(b).title, image: attrs(b).cover, icon: "📚", sub: `Book · ${String(attrs(b).release_date).slice(0, 4)}`, call: { name: "get_book", arguments: { title_or_number: String(i + 1) } } }); });
+      movies.forEach((x, i) => { if (String(attrs(x).release_date).slice(5) === mmdd) items.push({ section: "Released today", title: attrs(x).title, image: attrs(x).poster, icon: "🎬", sub: `Film · ${String(attrs(x).release_date).slice(0, 4)}`, call: { name: "get_movie", arguments: { title_or_number: String(i + 1) } } }); });
+      for (const p of cast.slice(0, 15)) items.push({ section: "Cast & crew birthdays (real world)", title: p.name, icon: "🎭", sub: `born ${p.year}`, url: p.url });
+
+      const label = `${MONTHS[month - 1]} ${day}`;
+      if (!items.length) return text(`📅 ${label}: no recorded births, deaths, releases or story events in the data.\n\n_Sources: ${SRC_PDB}, ${SRC_WD}_`);
+      const lines = items.map((it) => `- [${it.section}] ${it.title}${it.sub ? ` — ${it.sub}` : ""}`);
+      return card(`## 📅 ${label} in the wizarding world\n${lines.join("\n")}\n\n_Sources: ${SRC_PDB}, ${SRC_WD}. Story events are a short hand-picked list; PotterDB dates are community data._`, {
+        kind: "list", title: `📅 ${label}`, sub: "Today in the wizarding world", sources: `${SRC_PDB} + ${SRC_WD}`, items,
+      });
+    }),
+  );
+
+  // ---- live: news, cast, releases, editions, galleons ----
+  server.registerTool(
+    "hp_news",
+    {
+      title: "📰 Harry Potter News",
+      description: "Latest headlines about Harry Potter from Google News (live, newest first): the HBO series, casting, new projects, books. Optionally narrow with a topic such as 'HBO series' or 'casting'.",
+      inputSchema: { topic: optQ("Optional extra keywords, e.g. 'HBO series' or 'casting'."), limit: z.number().int().min(1).max(25).default(10).describe("Headlines to return (1-25, default 10).") },
+      annotations: { title: "Harry Potter News", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ topic, limit }: any) => {
+      const news = await latestNews(`"Harry Potter"${topic ? ` ${topic}` : ""}`, limit);
+      if (!news.length) return text(`📰 No recent headlines found${topic ? ` for "${topic}"` : ""}.\n\n_Source: ${SRC_NEWS}_`);
+      return card(`## 📰 Harry Potter news${topic ? ` — ${topic}` : ""}\n${news.map((n) => `- ${n.date} · **${n.title}** (${n.source}) ${n.url}`).join("\n")}\n\n_Source: ${SRC_NEWS}. Headlines only; open the link for the story._`, {
+        kind: "list", title: "📰 Harry Potter news", sub: topic ? String(topic) : "Latest headlines", sources: SRC_NEWS,
+        items: news.map((n) => ({ title: n.title, icon: "📰", sub: [n.source, n.date].filter(Boolean).join(" · "), url: n.url })),
+      });
+    }),
+  );
+
+  server.registerTool(
+    "cast_birthdays",
+    {
+      title: "🎭 Cast Birthdays",
+      description: "Actors who appeared in the Harry Potter films or the HBO series and were born on a given day (default today), from Wikidata. Pass `date` as MM-DD.",
+      inputSchema: { date: optQ("Optional day as 'MM-DD'. Default: today (UTC).") },
+      annotations: { title: "Cast Birthdays", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ date }: any) => {
+      const m = /^(?:\d{4}-)?(\d{1,2})-(\d{1,2})$/.exec(String(date ?? "").trim());
+      const now = new Date();
+      const month = m ? Number(m[1]) : now.getUTCMonth() + 1;
+      const day = m ? Number(m[2]) : now.getUTCDate();
+      if (month < 1 || month > 12 || day < 1 || day > 31) return fail("⚠️ Invalid date. Use MM-DD.");
+      const people = await castBirthdays(month, day);
+      const label = `${MONTHS[month - 1]} ${day}`;
+      if (!people.length) return text(`🎭 No cast members in Wikidata were born on ${label}.\n\n_Source: ${SRC_WD}_`);
+      return card(`## 🎭 Cast born on ${label}\n${people.map((p) => `- **${p.name}** (${p.year}) ${p.url}`).join("\n")}\n\n_Source: ${SRC_WD} (community-edited; cast lists may be incomplete)._`, {
+        kind: "list", title: `🎭 Cast born on ${label}`, sub: `${people.length} people`, sources: SRC_WD,
+        items: people.map((p) => ({ title: p.name, icon: "🎭", sub: `born ${p.year}`, url: p.url })),
+      });
+    }),
+  );
+
+  server.registerTool(
+    "next_releases",
+    {
+      title: "⏳ Next Releases",
+      description: "Upcoming Harry Potter film/series release dates from Wikidata, with the number of days until each (e.g. the HBO series).",
+      inputSchema: {},
+      annotations: { title: "Next Releases", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const rel = await upcomingReleases(today);
+      if (!rel.length) return text(`⏳ Wikidata lists no upcoming Harry Potter releases after ${today}.\n\n_Source: ${SRC_WD}_`);
+      const days = (d: string) => Math.max(0, Math.round((Date.parse(d) - Date.parse(today)) / 86400000));
+      return card(`## ⏳ Upcoming releases (from ${today})\n${rel.map((r) => `- **${r.title}** — ${r.date} (in ${days(r.date)} days)`).join("\n")}\n\n_Source: ${SRC_WD}. Dates may be provisional._`, {
+        kind: "list", title: "⏳ Next releases", sub: `As of ${today}`, sources: SRC_WD,
+        items: rel.map((r) => ({ title: r.title, icon: "⏳", sub: `${r.date} · in ${days(r.date)} days`, url: r.url })),
+      });
+    }),
+  );
+
+  server.registerTool(
+    "book_editions",
+    {
+      title: "📚 Book Editions",
+      description: "Editions, ratings and translations of the Harry Potter books from Open Library (most-published first). Optionally restrict by title, e.g. 'Goblet of Fire'.",
+      inputSchema: { title: optQ("Optional title, e.g. 'Goblet of Fire'. Default: all Harry Potter books.") },
+      annotations: { title: "Book Editions", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ title }: any) => {
+      const works = await openLibraryWorks(title ? `Harry Potter ${title}` : "Harry Potter", 10);
+      if (!works.length) return text(`📚 Open Library found nothing${title ? ` for "${title}"` : ""}.\n\n_Source: ${SRC_OL}_`);
+      const sub = (w: (typeof works)[number]) =>
+        [`${w.editions} editions`, w.languages.length ? `${w.languages.length} languages` : "", w.rating ? `★ ${w.rating} (${w.ratings})` : "", w.year ? `first ${w.year}` : ""].filter(Boolean).join(" · ");
+      return card(`## 📚 Editions${title ? ` — ${title}` : ""}\n${works.map((w) => `- **${w.title}** — ${sub(w)} ${w.url}`).join("\n")}\n\n_Source: ${SRC_OL}. Counts include reprints and translations._`, {
+        kind: "list", title: "📚 Book editions", sub: title ? String(title) : "Harry Potter", sources: SRC_OL,
+        items: works.map((w) => ({ title: w.title, image: w.cover, icon: "📚", sub: sub(w), url: w.url })),
+      });
+    }),
+  );
+
+  // Fan convention, not canon fact: 1 Galleon = 17 Sickles, 1 Sickle = 29 Knuts; ~£5 per Galleon is a commonly cited value.
+  server.registerTool(
+    "galleon_converter",
+    {
+      title: "💰 Galleon Converter",
+      description: "Convert a real price (ILS, USD, GBP, EUR) into wizarding money (Galleons, Sickles, Knuts) using a live exchange rate. The Galleon's real value is a fan convention (default £5, overridable).",
+      inputSchema: {
+        amount: z.number().positive().max(1e9).describe("Amount in the real currency."),
+        currency: z.enum(["ILS", "USD", "GBP", "EUR"]).default("ILS").describe("Currency of the amount (default ILS)."),
+        gbp_per_galleon: z.number().positive().max(1000).default(5).describe("How many pounds one Galleon is worth (default 5, a fan convention)."),
+      },
+      annotations: { title: "Galleon Converter", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ amount, currency, gbp_per_galleon }: any) => {
+      const fx = await fxRate(currency, "GBP");
+      const gbp = amount * fx.rate;
+      const knutsTotal = Math.round((gbp / gbp_per_galleon) * 17 * 29);
+      const g = Math.floor(knutsTotal / 493);
+      const s = Math.floor((knutsTotal % 493) / 29);
+      const k = knutsTotal % 29;
+      const result = `${g} Galleons, ${s} Sickles, ${k} Knuts`;
+      const note = `Rate ${fx.date}: 1 ${currency} = ${fx.rate} GBP. 1 Galleon = ${gbp_per_galleon} GBP = 17 Sickles = 493 Knuts (fan convention, not canon).`;
+      return card(`## 💰 ${amount} ${currency} = ${result}\n≈ £${gbp.toFixed(2)}\n\n${note}\n\n_Source: ${SRC_FX}_`, {
+        kind: "detail", name: `${amount} ${currency}`, icon: "💰", subtitle: result, sources: SRC_FX,
+        badges: [`≈ £${gbp.toFixed(2)}`, `${knutsTotal} Knuts total`],
+        summary: note,
+        rows: [["Galleons", String(g)], ["Sickles", String(s)], ["Knuts", String(k)]],
+        links: [],
+      });
     }),
   );
 

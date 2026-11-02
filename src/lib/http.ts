@@ -31,7 +31,14 @@ function prune() {
   while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
 }
 
-export async function getJson<T>(url: string, source: string, ttl = TTL_MS): Promise<T> {
+export const getJson = <T>(url: string, source: string, ttl = TTL_MS): Promise<T> =>
+  fetchCached<T>(url, source, ttl, "application/json", (res) => res.json() as Promise<T>);
+
+/** Same cache/timeout/error handling for text bodies (RSS). Live sources pass a short ttl. */
+export const getText = (url: string, source: string, ttl = TTL_MS): Promise<string> =>
+  fetchCached<string>(url, source, ttl, "application/rss+xml,application/xml;q=0.9,*/*;q=0.5", (res) => res.text());
+
+async function fetchCached<T>(url: string, source: string, ttl: number, accept: string, parse: (res: Response) => Promise<T>): Promise<T> {
   const now = Date.now();
   const hit = cache.get(url);
   if (hit && hit.expires > now) return hit.value as T;
@@ -45,7 +52,7 @@ export async function getJson<T>(url: string, source: string, ttl = TTL_MS): Pro
   const p = (async () => {
     try {
       const res = await fetch(url, {
-        headers: { accept: "application/json", "user-agent": "hogwarts-mcp/1.0" },
+        headers: { accept, "user-agent": "hogwarts-mcp/1.0" },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       if (res.status === 429) {
@@ -57,7 +64,7 @@ export async function getJson<T>(url: string, source: string, ttl = TTL_MS): Pro
       }
       if (res.status === 404) throw new UpstreamError(`${source}: not found (HTTP 404).`, source, 404);
       if (!res.ok) throw new UpstreamError(`${source} returned HTTP ${res.status}.`, source, res.status);
-      const value = (await res.json()) as T;
+      const value = await parse(res);
       cache.set(url, { value, expires: Date.now() + ttl });
       prune();
       return value;
