@@ -29,7 +29,14 @@ import { ICON_DATA_URI } from "./icon.js";
 
 const HOUSES = ["Gryffindor", "Slytherin", "Ravenclaw", "Hufflepuff"];
 
-const READ_ONLY = { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: true } as const;
+const FAMOUS: Record<string, string[]> = {
+  Gryffindor: ["harry-potter", "hermione-granger", "ron-weasley", "neville-longbottom", "ginny-weasley", "fred-weasley", "george-weasley", "minerva-mcgonagall", "sirius-black", "lily-potter", "james-potter", "remus-lupin", "albus-dumbledore", "rubeus-hagrid", "seamus-finnigan", "dean-thomas", "lavender-brown", "oliver-wood", "percy-weasley"],
+  Slytherin: ["draco-malfoy", "severus-snape", "lord-voldemort", "lucius-malfoy", "bellatrix-lestrange", "narcissa-malfoy", "horace-slughorn", "vincent-crabbe", "gregory-goyle", "pansy-parkinson", "regulus-black", "dolores-umbridge"],
+  Ravenclaw: ["luna-lovegood", "cho-chang", "filius-flitwick", "gilderoy-lockhart", "rowena-ravenclaw", "padma-patil", "sybill-trelawney", "penelope-clearwater", "quirinus-quirrell", "garrick-ollivander"],
+  Hufflepuff: ["cedric-diggory", "nymphadora-tonks", "pomona-sprout", "newt-scamander", "hannah-abbott", "ernie-macmillan", "susan-bones", "helga-hufflepuff", "justin-finch-fletchley", "leanne"],
+};
+
+const READ_ONLY ={ readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: true } as const;
 
 const limitSchema = z.number().int().min(1).max(25).default(10).describe("Results per page (1-25, default 10).");
 const pageSchema = z.number().int().min(1).max(500).default(1).describe("Page number, starting at 1.");
@@ -219,14 +226,18 @@ export function createServer(): McpServer {
       annotations: { title: "Random Character", ...READ_ONLY, idempotentHint: false },
     },
     safe(async ({ house }: any) => {
-      const f: Record<string, string> = {};
-      if (house) f.house_eq = bestMatches(house, HOUSES, (h) => h, 1)[0]?.item ?? house;
-      f.image_present = "true";
-      const total = await pdbTotal("characters", f).catch(() => 0);
-      const filters = total ? f : { house_eq: f.house_eq };
-      const n = total || (await pdbTotal("characters", filters));
-      if (!n) return text(`🔍 No characters found for that house.`);
-      const res = await pdbList("characters", filters, { size: 1, page: 1 + Math.floor(Math.random() * n) });
+      const h = house ? bestMatches(house, HOUSES, (x) => x, 1)[0]?.item : undefined;
+      if (house && !h) return text(`🔍 Unknown house "${house}". Choose one of: ${HOUSES.join(", ")}.`);
+      // PotterDB has no popularity field, so draw from a curated list of well-known characters first.
+      const pool = [...(h ? FAMOUS[h] : Object.values(FAMOUS).flat())].sort(() => Math.random() - 0.5);
+      for (const slug of pool.slice(0, 6)) {
+        const item = await pdbBySlug("characters", slug).catch(() => undefined);
+        if (item) return text(`🎲 ${charCard(item, true)}\n\n_Source: ${SRC_PDB} · picked from well-known characters_`);
+      }
+      const f = h ? { house_eq: h } : {};
+      const n = await pdbTotal("characters", f);
+      if (!n) return text(`🔍 No characters found.`);
+      const res = await pdbList("characters", f, { size: 1, page: 1 + Math.floor(Math.random() * n) });
       return text(`🎲 ${charCard(res.items[0], true)}\n\n_Source: ${SRC_PDB}_`);
     }),
   );
@@ -478,7 +489,7 @@ export function createServer(): McpServer {
     "search_chapters",
     {
       title: "🔎 Search Chapters",
-      description: "Find book chapters by words in the title or summary, optionally within one book.",
+      description: "Find book chapters by words in the title or short summary (not the full text), optionally within one book. Try specific names or events, e.g. 'Horntail' or 'Triwizard'.",
       inputSchema: {
         query: q("Word or phrase, e.g. 'dragon' or 'Triwizard'."),
         book: optQ("Optional book title or number to restrict the search."),
@@ -538,7 +549,7 @@ export function createServer(): McpServer {
           ["Released", m.release_date], ["Runtime", m.running_time], ["Rating", m.rating], ["Directors", list(m.directors)],
           ["Screenwriters", list(m.screenwriters)], ["Producers", list(m.producers)], ["Music", list(m.music_composers)],
           ["Budget", m.budget], ["Box office", m.box_office], ["Distributors", list(m.distributors)],
-        ])}\n\n${truncate(String(m.summary ?? "").trim(), 800)}\n\n${[link("Trailer", m.trailer), link("Wiki", m.wiki)].filter(Boolean).join(" · ")}\n_Source: ${SRC_PDB}_`,
+        ])}\n\n${truncate(String(m.summary ?? "").trim(), 800)}\n\n${[link("Trailer", m.trailer), link("Wiki", m.wiki)].filter(Boolean).join(" · ")}\n_Source: ${SRC_PDB} (community data; dates and figures may contain errors)_`,
       );
     }),
   );
