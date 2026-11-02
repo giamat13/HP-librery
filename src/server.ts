@@ -26,6 +26,7 @@ import {
   truncate,
 } from "./lib/text.js";
 import { ICON_DATA_URI } from "./icon.js";
+import { VIEW_CSP, VIEW_HTML, VIEW_MIME, VIEW_URI } from "./view.js";
 
 const HOUSES = ["Gryffindor", "Slytherin", "Ravenclaw", "Hufflepuff"];
 
@@ -43,8 +44,11 @@ const pageSchema = z.number().int().min(1).max(500).default(1).describe("Page nu
 const q = (what: string) => z.string().trim().min(1).max(100).describe(what);
 const optQ = (what: string) => z.string().trim().max(100).optional().describe(what);
 
-type Out = { content: { type: "text"; text: string }[]; isError?: boolean };
+type Out = { content: { type: "text"; text: string }[]; structuredContent?: Record<string, unknown>; isError?: boolean };
 const text = (t: string): Out => ({ content: [{ type: "text", text: t }] });
+// Text for the model, plus structured data for the inline card (MCP Apps hosts render VIEW_URI with it).
+const card = (t: string, data: Record<string, unknown>): Out => ({ content: [{ type: "text", text: t }], structuredContent: data });
+const UI_META = { ui: { resourceUri: VIEW_URI }, "ui/resourceUri": VIEW_URI };
 const fail = (t: string): Out => ({ content: [{ type: "text", text: t }], isError: true });
 
 function safe<A>(fn: (a: A) => Promise<Out>) {
@@ -96,6 +100,23 @@ function charCard(i: PdbItem, full = false): string {
   return `### ${a.name}\n${facts(rows)}${a.wiki ? `\n- ${link("Wiki", a.wiki)}${a.image ? " · " + link("Image", a.image) : ""}` : ""}`;
 }
 
+const present = (rows: [string, unknown][]) =>
+  rows.map(([k, v]) => [k, Array.isArray(v) ? list(v, 8) : clean(v)] as [string, unknown]).filter(([, v]) => v !== undefined && v !== "");
+
+function charData(i: PdbItem, elixirs?: string[]) {
+  const a = attrs(i);
+  return {
+    kind: "character", name: a.name, image: a.image, wiki: a.wiki, house: clean(a.house), species: clean(a.species),
+    blood_status: clean(a.blood_status), gender: clean(a.gender), aliases: (a.alias_names ?? []).slice(0, 4), elixirs,
+    sources: elixirs?.length ? `${SRC_PDB} + ${SRC_WW}` : SRC_PDB,
+    rows: present([
+      ["Born", a.born], ["Died", a.died], ["Nationality", a.nationality], ["Eyes", a.eye_color], ["Hair", a.hair_color],
+      ["Height", a.height], ["Family", a.family_members], ["Jobs", a.jobs], ["Titles", a.titles], ["Wands", a.wands],
+      ["Patronus", a.patronus], ["Boggart", a.boggart], ["Animagus", a.animagus],
+    ]),
+  };
+}
+
 function spellLine(i: PdbItem): string {
   const a = attrs(i);
   const inc = stripPron(a.incantation);
@@ -111,6 +132,16 @@ export function createServer(): McpServer {
     version: "1.0.0",
     icons: [{ src: ICON_DATA_URI, mimeType: "image/svg+xml", sizes: ["any"] }],
   } as any);
+
+  // ---- inline card (MCP Apps) ----
+  server.registerResource(
+    "hogwarts-card",
+    VIEW_URI,
+    { title: "Hogwarts card", description: "Visual card for characters, spells, potions and houses.", mimeType: VIEW_MIME },
+    async () => ({
+      contents: [{ uri: VIEW_URI, mimeType: VIEW_MIME, text: VIEW_HTML, _meta: { ui: { csp: VIEW_CSP, prefersBorder: false } } }],
+    }),
+  );
 
   // ---- characters ----
   server.registerTool(
@@ -162,19 +193,24 @@ export function createServer(): McpServer {
         "Full profile of one character by name or slug (fuzzy, accent/case-insensitive). Enriched with Wizard World elixir data when available.",
       inputSchema: { name_or_slug: q("Name or slug, e.g. 'Hermione Granger' or 'severus-snape'.") },
       annotations: { title: "Get Character Profile", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ name_or_slug }: any) => {
       const r = await pdbResolve("characters", name_or_slug);
       if (!r.item) return didYouMean("character", name_or_slug, r.suggestions, "get_character");
       const a = attrs(r.item);
       let out = charCard(r.item, true) + `\n\n_Source: ${SRC_PDB}_`;
+      let elixirs: string[] | undefined;
       const w = await wwWizard(a.name);
       if (!w.ok) out += `\n\n${WW_DOWN_NOTE}`;
       else {
         const hit = w.data.find((x: any) => similarity(`${x.firstName} ${x.lastName}`, a.name) > 0.8);
-        if (hit?.elixirs?.length) out += `\n\n**🧪 Elixirs invented/associated (${SRC_WW}):** ${hit.elixirs.map((e: any) => e.name).join(", ")}`;
+        if (hit?.elixirs?.length) {
+          elixirs = hit.elixirs.map((e: any) => e.name);
+          out += `\n\n**🧪 Elixirs invented/associated (${SRC_WW}):** ${elixirs!.join(", ")}`;
+        }
       }
-      return text(out);
+      return card(out, charData(r.item, elixirs));
     }),
   );
 
@@ -190,6 +226,7 @@ export function createServer(): McpServer {
         page: pageSchema,
       },
       annotations: { title: "House Roster", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ house, limit, page }: any) => {
       const m = bestMatches(house, HOUSES, (h) => h, 1)[0];
@@ -200,9 +237,15 @@ export function createServer(): McpServer {
         ww<any[]>("Houses"),
       ]);
       let head = `## 🏰 ${name}\n`;
+      let hInfo: Record<string, unknown> | undefined;
       if (info.ok) {
         const h = info.data.find((x: any) => norm(x.name) === norm(name));
         if (h) {
+          hInfo = {
+            founder: h.founder, colours: h.houseColours, animal: h.animal, element: h.element, ghost: h.ghost,
+            commonRoom: h.commonRoom, heads: list((h.heads ?? []).map((x: any) => `${x.firstName} ${x.lastName}`)),
+            traits: (h.traits ?? []).map((x: any) => x.name).slice(0, 12),
+          };
           head += facts([
             ["Founder", h.founder], ["Colours", h.houseColours], ["Animal", h.animal], ["Element", h.element],
             ["Ghost", h.ghost], ["Common room", h.commonRoom],
@@ -213,7 +256,10 @@ export function createServer(): McpServer {
       } else head += `${WW_DOWN_NOTE}\n`;
       const rows = members.items.map((i) => [attrs(i).name, attrs(i).species, attrs(i).blood_status, attrs(i).gender]);
       const body = `\n### Members (${SRC_PDB})\n${table(["Name", "Species", "Blood status", "Gender"], rows)}`;
-      return text(head + body + pageFooter(members.total, members.items.length, page, limit, "house_roster"));
+      return card(head + body + pageFooter(members.total, members.items.length, page, limit, "house_roster"), {
+        kind: "house", name, info: hInfo, total: members.total, sources: hInfo ? `${SRC_PDB} + ${SRC_WW}` : SRC_PDB,
+        members: members.items.map((i) => ({ name: attrs(i).name, species: attrs(i).species, blood_status: attrs(i).blood_status })),
+      });
     }),
   );
 
@@ -224,6 +270,7 @@ export function createServer(): McpServer {
       description: "Pick a random character, optionally from one house. Great for trivia and inspiration.",
       inputSchema: { house: optQ("Optional house to draw from.") },
       annotations: { title: "Random Character", ...READ_ONLY, idempotentHint: false },
+      _meta: UI_META,
     },
     safe(async ({ house }: any) => {
       const h = house ? bestMatches(house, HOUSES, (x) => x, 1)[0]?.item : undefined;
@@ -232,13 +279,13 @@ export function createServer(): McpServer {
       const pool = [...(h ? FAMOUS[h] : Object.values(FAMOUS).flat())].sort(() => Math.random() - 0.5);
       for (const slug of pool.slice(0, 6)) {
         const item = await pdbBySlug("characters", slug).catch(() => undefined);
-        if (item) return text(`🎲 ${charCard(item, true)}\n\n_Source: ${SRC_PDB} · picked from well-known characters_`);
+        if (item) return card(`🎲 ${charCard(item, true)}\n\n_Source: ${SRC_PDB} · picked from well-known characters_`, charData(item));
       }
       const f = h ? { house_eq: h } : {};
       const n = await pdbTotal("characters", f);
       if (!n) return text(`🔍 No characters found.`);
       const res = await pdbList("characters", f, { size: 1, page: 1 + Math.floor(Math.random() * n) });
-      return text(`🎲 ${charCard(res.items[0], true)}\n\n_Source: ${SRC_PDB}_`);
+      return card(`🎲 ${charCard(res.items[0], true)}\n\n_Source: ${SRC_PDB}_`, charData(res.items[0]));
     }),
   );
 
@@ -249,6 +296,7 @@ export function createServer(): McpServer {
       description: "Side-by-side table of two characters' key attributes (house, species, wand, patronus, etc.).",
       inputSchema: { a: q("First character name or slug."), b: q("Second character name or slug.") },
       annotations: { title: "Compare Characters", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ a, b }: any) => {
       const [ra, rb] = await Promise.all([pdbResolve("characters", a), pdbResolve("characters", b)]);
@@ -264,7 +312,10 @@ export function createServer(): McpServer {
       const rows = fields
         .map(([label, k]) => [label, truncate(String(fmt(A[k]) ?? "—"), 120), truncate(String(fmt(B[k]) ?? "—"), 120)])
         .filter((r) => r[1] !== "—" || r[2] !== "—");
-      return text(`## ⚔️ ${A.name} vs ${B.name}\n${table(["", A.name, B.name], rows)}\n\n_Source: ${SRC_PDB}_`);
+      return card(`## ⚔️ ${A.name} vs ${B.name}\n${table(["", A.name, B.name], rows)}\n\n_Source: ${SRC_PDB}_`, {
+        kind: "compare", sources: SRC_PDB, rows,
+        a: { name: A.name, image: A.image }, b: { name: B.name, image: B.image },
+      });
     }),
   );
 
@@ -309,6 +360,7 @@ export function createServer(): McpServer {
       description: "One spell by name or slug, merging PotterDB and Wizard World and showing which source gave each field.",
       inputSchema: { name_or_slug: q("e.g. 'Expelliarmus' or 'lumos-solem'.") },
       annotations: { title: "Get Spell", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ name_or_slug }: any) => {
       const r = await pdbResolve("spells", name_or_slug);
@@ -343,9 +395,20 @@ export function createServer(): McpServer {
       if (p.wiki || p.image) out += `\n\n${[link("Wiki", p.wiki), link("Image", p.image)].filter(Boolean).join(" · ")}`;
       if (wwDown) out += `\n\n${WW_DOWN_NOTE}`;
       else if (!w) out += `\n\n_No matching entry in ${SRC_WW}._`;
-      return text(out + `\n\n_Sources: ${SRC_PDB}${w ? ", " + SRC_WW : ""}_`);
+      return card(out + `\n\n_Sources: ${SRC_PDB}${w ? ", " + SRC_WW : ""}_`, {
+        kind: "spell", name: p.name, image: p.image, wiki: p.wiki, sources: w ? `${SRC_PDB} + ${SRC_WW}` : SRC_PDB,
+        incantation: stripPron(p.incantation) ?? w?.incantation, category: clean(p.category) ?? clean(w?.type),
+        effect: clean(p.effect) ?? clean(w?.effect), light: clean(p.light) ?? clean(w?.light),
+        rows: present([["Hand motion", p.hand], ["Creator", p.creator ?? w?.creator]]),
+      });
     }),
   );
+
+  const spellData = (a: Record<string, any>) => ({
+    kind: "spell", name: a.name, image: a.image, wiki: a.wiki, sources: SRC_PDB,
+    incantation: stripPron(a.incantation), category: clean(a.category), effect: clean(a.effect), light: clean(a.light),
+    rows: present([["Hand motion", a.hand], ["Creator", a.creator]]),
+  });
 
   server.registerTool(
     "random_spell",
@@ -354,6 +417,7 @@ export function createServer(): McpServer {
       description: "Pick a random spell, optionally from one category (Charm, Curse, Hex…).",
       inputSchema: { category: optQ("Optional category.") },
       annotations: { title: "Random Spell", ...READ_ONLY, idempotentHint: false },
+      _meta: UI_META,
     },
     safe(async ({ category }: any) => {
       const f = { category_cont: category };
@@ -361,7 +425,7 @@ export function createServer(): McpServer {
       if (!n) return text(`🔍 No spells in category "${category}".`);
       const res = await pdbList("spells", f, { size: 1, page: 1 + Math.floor(Math.random() * n) });
       const a = attrs(res.items[0]);
-      return text(`🎲 ${spellLine(res.items[0])}\n${facts([["Hand motion", a.hand], ["Creator", a.creator]])}\n\n_Source: ${SRC_PDB}_`);
+      return card(`🎲 ${spellLine(res.items[0])}\n${facts([["Hand motion", a.hand], ["Creator", a.creator]])}\n\n_Source: ${SRC_PDB}_`, spellData(a));
     }),
   );
 
@@ -410,6 +474,7 @@ export function createServer(): McpServer {
       description: "One potion by name or slug with ingredients, difficulty and effects, merging PotterDB and Wizard World elixirs.",
       inputSchema: { name_or_slug: q("e.g. 'Felix Felicis'.") },
       annotations: { title: "Get Potion", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ name_or_slug }: any) => {
       const r = await pdbResolve("potions", name_or_slug);
@@ -428,7 +493,19 @@ export function createServer(): McpServer {
         ]) + "\n";
       } else if (!wr.ok) out += `\n${WW_DOWN_NOTE}\n`;
       if (r.item && attrs(r.item).wiki) out += `\n${link("Wiki", attrs(r.item).wiki)}`;
-      return text(out + `\n_Sources: ${[r.item ? SRC_PDB : "", w ? SRC_WW : ""].filter(Boolean).join(", ")}_`);
+      const pp = r.item ? attrs(r.item) : {};
+      const ings = (w?.ingredients ?? []).map((x: any) => x.name);
+      const pdbIngs = typeof pp.ingredients === "string" ? pp.ingredients.split(/,\s*/).filter(Boolean) : [];
+      return card(out + `\n_Sources: ${[r.item ? SRC_PDB : "", w ? SRC_WW : ""].filter(Boolean).join(", ")}_`, {
+        kind: "potion", name, image: pp.image, wiki: pp.wiki, sources: [r.item ? SRC_PDB : "", w ? SRC_WW : ""].filter(Boolean).join(" + "),
+        effect: clean(pp.effect) ?? clean(w?.effect), difficulty: clean(pp.difficulty) ?? clean(w?.difficulty !== "Unknown" ? w?.difficulty : undefined),
+        ingredients: (ings.length ? ings : pdbIngs).slice(0, 20),
+        rows: present([
+          ["Characteristics", pp.characteristics ?? w?.characteristics], ["Side effects", pp.side_effects ?? w?.sideEffects],
+          ["Brewing time", pp.time ?? w?.time], ["Inventors", pp.inventors ?? list((w?.inventors ?? []).map((x: any) => `${x.firstName} ${x.lastName}`))],
+          ["Manufacturers", pp.manufacturers ?? w?.manufacturer],
+        ]),
+      });
     }),
   );
 
