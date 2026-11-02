@@ -59,8 +59,9 @@ export interface OlWork {
 
 export async function openLibraryWorks(title: string, limit: number): Promise<OlWork[]> {
   const fields = "key,title,edition_count,first_publish_year,language,ratings_average,ratings_count,want_to_read_count,cover_i";
-  const j = await getJson<any>(`https://openlibrary.org/search.json?title=${enc(title)}&author=${enc("J. K. Rowling")}&sort=editions&fields=${fields}&limit=${limit}`, SRC_OL, 30 * 60 * 1000);
-  return (j?.docs ?? []).map((d: any) => ({
+  const j = await getJson<any>(`https://openlibrary.org/search.json?title=${enc(title)}&author=${enc("J. K. Rowling")}&fields=${fields}&limit=${limit + 6}`, SRC_OL, 30 * 60 * 1000, 22000);
+  const docs: any[] = [...(j?.docs ?? [])].sort((a, b) => (b.edition_count ?? 0) - (a.edition_count ?? 0)).slice(0, limit);
+  return docs.map((d: any) => ({
     title: String(d.title),
     url: `https://openlibrary.org${d.key}`,
     year: d.first_publish_year,
