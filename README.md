@@ -40,8 +40,8 @@ All tools are read-only (`readOnlyHint`, `idempotentHint`, `openWorldHint`), ret
 
 ## Use it
 
-**claude.ai:** `+` → **Add custom connector** → paste `https://<your-deployment>/mcp` → Add.
-**Claude Code:** `claude mcp add --transport http hogwarts https://<your-deployment>/mcp`
+**claude.ai:** `+` → **Add custom connector** → paste `https://hogwarts-mcp.vercel.app/mcp` → Add.
+**Claude Code:** `claude mcp add --transport http hogwarts https://hogwarts-mcp.vercel.app/mcp`
 
 ## Develop
 
@@ -50,7 +50,7 @@ npm install
 npm run dev        # http://localhost:3000/mcp
 npm run typecheck
 npm test           # calls every tool through a real MCP client against the live APIs
-npm test -- https://<your-deployment>/mcp
+npm test -- https://hogwarts-mcp.vercel.app/mcp
 ```
 
 ## Deploy (Vercel Hobby)
