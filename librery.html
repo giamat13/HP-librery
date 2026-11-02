@@ -218,7 +218,7 @@
 
     <footer class="border-t border-slate-800/80 bg-slate-950 py-6 text-center text-xs text-slate-500">
         <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div>נבנה בעזרת ⚡ <span class="text-gold font-semibold">Wizard World API</span></div>
+            <div>נבנה בעזרת ⚡ <span class="text-gold font-semibold">PotterDB</span> + <span class="text-gold font-semibold">Wizard World API</span> · נתוני קהילה, ייתכנו חוסרים · לא קשור ל-J.K. Rowling או Warner Bros.</div>
             <div class="flex items-center gap-4">
                 <span>Hogwarts Archives © 2026</span>
                 <span>•</span>
@@ -228,15 +228,19 @@
     </footer>
 
     <script>
-        const API_BASE = 'https://wizard-world-api.herokuapp.com';
+        // מקור ראשי: PotterDB (כשפים, שיקויים). מקור משלים: Wizard World (בתים, קוסמים, רכיבים, אליקסירים).
+        const WW_BASE = 'https://wizard-world-api.herokuapp.com';
+        const PDB_BASE = 'https://api.potterdb.com/v1';
 
         const ENDPOINTS = {
-            spells: '/Spells',
-            elixirs: '/Elixirs',
             houses: '/Houses',
             wizards: '/Wizards',
             ingredients: '/Ingredients'
         };
+
+        const CACHE_TTL_MS = 60 * 60 * 1000; // שעה - מכבד את מגבלת הקצב של PotterDB
+        const FETCH_TIMEOUT_MS = 8000;
+        const inflight = new Map(); // מניעת בקשות כפולות במקביל
 
         const TITLES = {
             spells: 'כשפים ולחשים',
@@ -294,6 +298,99 @@
             usingFallback: false
         };
 
+        // ---- שכבת השגת נתונים: מטמון localStorage + כפילויות + timeout + טיפול ב-429 ----
+        function readCache(url, allowStale) {
+            try {
+                const raw = JSON.parse(localStorage.getItem('hp_cache_' + url) || 'null');
+                if (raw && (allowStale || Date.now() - raw.t < CACHE_TTL_MS)) return raw.v;
+            } catch (e) { /* localStorage לא זמין */ }
+            return null;
+        }
+
+        function writeCache(url, value) {
+            try { localStorage.setItem('hp_cache_' + url, JSON.stringify({ t: Date.now(), v: value })); } catch (e) { /* מלא/חסום */ }
+        }
+
+        function getJson(url) {
+            const cached = readCache(url, false);
+            if (cached) return Promise.resolve(cached);
+            if (inflight.has(url)) return inflight.get(url);
+
+            const p = (async () => {
+                try {
+                    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+                    if (res.status === 429) throw new Error('הגעת למגבלת הבקשות של ה-API (429). נסה שוב בעוד כמה דקות.');
+                    if (!res.ok) throw new Error('API request failed: ' + res.status);
+                    const data = await res.json();
+                    writeCache(url, data);
+                    return data;
+                } catch (err) {
+                    const stale = readCache(url, true); // עדיף מידע ישן על פני כלום
+                    if (stale) return stale;
+                    throw err;
+                } finally {
+                    inflight.delete(url);
+                }
+            })();
+            inflight.set(url, p);
+            return p;
+        }
+
+        // PotterDB מחזיר JSON:API עם עימוד - אוספים את כל העמודים (עד 6 עמודים של 100)
+        async function fetchAllPdb(resource) {
+            const items = [];
+            for (let page = 1; page <= 6; page++) {
+                const json = await getJson(`${PDB_BASE}/${resource}?page%5Bsize%5D=100&page%5Bnumber%5D=${page}&sort=name`);
+                items.push(...(json.data || []));
+                if (!json.meta || !json.meta.pagination || !json.meta.pagination.next) break;
+            }
+            return items;
+        }
+
+        const normName = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+        function mapPdbSpell(i) {
+            const a = i.attributes || {};
+            return {
+                id: i.id, name: a.name,
+                incantation: a.incantation ? String(a.incantation).replace(/\s*\(.*?\)\s*$/, '') : a.name,
+                effect: a.effect, type: a.category || 'Spell', light: a.light, creator: a.creator,
+                canBeVerbal: !!a.incantation, source: 'PotterDB'
+            };
+        }
+
+        function mapPdbPotion(i, wwByName) {
+            const a = i.attributes || {};
+            const w = wwByName.get(normName(a.name));
+            const fromPdb = a.ingredients ? String(a.ingredients).split(/,\s*/).filter(Boolean).map(name => ({ name })) : [];
+            return {
+                id: i.id, name: a.name,
+                effect: a.effect || (w && w.effect),
+                difficulty: String(a.difficulty || (w && w.difficulty) || '').replace(/\s+/g, '') || undefined,
+                sideEffects: a.side_effects || (w && w.sideEffects),
+                ingredients: (w && w.ingredients && w.ingredients.length) ? w.ingredients : fromPdb,
+                source: w ? 'PotterDB + Wizard World' : 'PotterDB'
+            };
+        }
+
+        async function loadCategory(category) {
+            if (category === 'spells') {
+                return (await fetchAllPdb('spells')).map(mapPdbSpell);
+            }
+            if (category === 'elixirs') {
+                const [potions, wwList] = await Promise.all([
+                    fetchAllPdb('potions'),
+                    getJson(`${WW_BASE}/Elixirs`).catch(() => []) // Wizard World אופציונלי
+                ]);
+                const wwByName = new Map(wwList.map(e => [normName(e.name), e]));
+                const merged = potions.map(p => mapPdbPotion(p, wwByName));
+                const known = new Set(merged.map(p => normName(p.name)));
+                wwList.filter(e => !known.has(normName(e.name))).forEach(e => merged.push({ ...e, source: 'Wizard World' }));
+                return merged.sort((x, y) => String(x.name).localeCompare(String(y.name)));
+            }
+            return getJson(`${WW_BASE}${ENDPOINTS[category]}`);
+        }
+
         async function fetchCategoryData(category) {
             if (state.dataCache[category]) {
                 return state.dataCache[category];
@@ -301,15 +398,8 @@
 
             showLoading(true);
             try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 6000); // 6s timeout
-
-                const response = await fetch(`${API_BASE}${ENDPOINTS[category]}`, { signal: controller.signal });
-                clearTimeout(timeoutId);
-
-                if (!response.ok) throw new Error('API request failed');
-                
-                const data = await response.json();
+                const data = await loadCategory(category);
+                if (!Array.isArray(data) || data.length === 0) throw new Error('empty response');
                 state.dataCache[category] = data;
                 updateApiStatus(true);
                 return data;
