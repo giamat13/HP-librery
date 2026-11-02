@@ -11,6 +11,7 @@ const calls: [string, Record<string, unknown>][] = [
   ["search_characters", { query: "weasley", house: "Gryffindor", limit: 3 }],
   ["search_characters", { query: "hermione grnger" }],
   ["get_character", { name_or_slug: "Severus Snape" }],
+  ["character_family", { name_or_slug: "Harry Potter" }],
   ["get_character", { name_or_slug: "dumbledor" }],
   ["house_roster", { house: "slytherin", limit: 5 }],
   ["search_spells", { query: "lumos", limit: 3 }],

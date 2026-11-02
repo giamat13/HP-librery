@@ -18,6 +18,7 @@ Data comes from [PotterDB](https://docs.potterdb.com) (primary) and the
 | `house_roster` | House info (founder, colours, ghost, traits) + paginated member list |
 | `random_character` | Random character, optionally from one house |
 | `compare_characters` | Side-by-side table of two characters |
+| `character_family` | Family of one character grouped by relation (parents, partner, children, in-laws…) |
 | `search_spells` | Search spells by name, category, incantation, words in the effect |
 | `get_spell` | One spell merged from both sources, showing which source gave each field (also finds spells by incantation, e.g. "Expelliarmus") |
 | `random_spell` | Random spell, optionally by category |
@@ -31,7 +32,13 @@ All tools are read-only (`readOnlyHint`, `idempotentHint`, `openWorldHint`), ret
 
 ## Visual card (MCP Apps)
 
-`get_character`, `random_character`, `compare_characters`, `house_roster`, `get_spell`, `random_spell` and `get_potion` also return structured data and point to a `ui://hogwarts/card.html` resource. Hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) render it inline as a small themed card (house colours, spell-light colour, ingredient chips, side-by-side compare). Hosts without support just show the Markdown text, so nothing is lost. The view is a single self-contained HTML file in `src/view.ts` that speaks the MCP Apps postMessage protocol directly.
+Every tool except `search_chapters` also returns structured data and points to a `ui://hogwarts/card.html` resource. Hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) render it inline as a small themed card: house colours, spell-light colour, ingredient chips, side-by-side compare, book and movie covers, a family tree and source status lights. Hosts without support just show the Markdown text, so nothing is lost.
+
+The card is interactive: Prev/Next buttons page through lists, clicking a list row or a family member opens that profile (with a Back button), and 🎲 Another redraws a random character or spell. These clicks call the tools again through the host.
+
+The view is a single self-contained HTML file in `src/view.ts` that speaks the MCP Apps postMessage protocol directly.
+
+> **Already connected before the cards existed?** claude.ai caches the tool list. Remove the connector and add it again, then start a new chat, or the cards will not show.
 
 ## Example prompts
 

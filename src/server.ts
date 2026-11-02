@@ -103,10 +103,13 @@ function charCard(i: PdbItem, full = false): string {
 const present = (rows: [string, unknown][]) =>
   rows.map(([k, v]) => [k, Array.isArray(v) ? list(v, 8) : clean(v)] as [string, unknown]).filter(([, v]) => v !== undefined && v !== "");
 
-function charData(i: PdbItem, elixirs?: string[]) {
+type Call = { name: string; arguments: Record<string, unknown> };
+
+function charData(i: PdbItem, elixirs?: string[], again?: Call) {
   const a = attrs(i);
   return {
-    kind: "character", name: a.name, image: a.image, wiki: a.wiki, house: clean(a.house), species: clean(a.species),
+    kind: "character", name: a.name, image: a.image, wiki: a.wiki, house: clean(a.house), species: clean(a.species), again,
+    family: a.family_members?.length ? { name: "character_family", arguments: { name_or_slug: a.slug } } : undefined,
     blood_status: clean(a.blood_status), gender: clean(a.gender), aliases: (a.alias_names ?? []).slice(0, 4), elixirs,
     sources: elixirs?.length ? `${SRC_PDB} + ${SRC_WW}` : SRC_PDB,
     rows: present([
@@ -159,6 +162,7 @@ export function createServer(): McpServer {
         page: pageSchema,
       },
       annotations: { title: "Search Characters", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ query, house, species, blood_status, limit, page }: any) => {
       const res = await pdbList(
@@ -175,7 +179,15 @@ export function createServer(): McpServer {
         return text(`🔍 No characters match those filters. Try fewer filters.\n\n_Source: ${SRC_PDB}_`);
       }
       const body = res.items.map((i) => charCard(i)).join("\n\n");
-      return text(`${body}${pageFooter(res.total, res.items.length, page, limit, "search_characters")}\n_Source: ${SRC_PDB}_`);
+      return card(`${body}${pageFooter(res.total, res.items.length, page, limit, "search_characters")}\n_Source: ${SRC_PDB}_`, {
+        kind: "list", title: "Characters", sub: `${res.total} found`, total: res.total, sources: SRC_PDB,
+        items: res.items.map((i) => ({
+          title: attrs(i).name, image: attrs(i).image, icon: "🧙",
+          sub: [attrs(i).house, attrs(i).species, attrs(i).blood_status].filter(Boolean).join(" · "),
+          call: { name: "get_character", arguments: { name_or_slug: attrs(i).slug } },
+        })),
+        nav: { name: "search_characters", arguments: { query, house, species, blood_status, limit }, page, pages: Math.ceil(res.total / limit) },
+      });
     }),
   );
 
@@ -211,6 +223,59 @@ export function createServer(): McpServer {
         }
       }
       return card(out, charData(r.item, elixirs));
+    }),
+  );
+
+  // "Name (I) (née X) (mother) †" -> { name, relation, dead }
+  function parseRelative(raw: string) {
+    const dead = raw.includes("†");
+    const s = raw.replace(/†/g, "").trim();
+    const m = s.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+    const rel = (m ? m[2] : s).trim();
+    const name = (m ? m[1] : s).replace(/\s*\((?:[IVX]+|née [^)]*)\)/g, "").trim();
+    return { name: name || s, relation: rel.toLowerCase(), dead };
+  }
+  function relGroup(rel: string): string {
+    if (/in-law|by marriage/.test(rel)) return "In-laws";
+    if (/grand|ancestor/.test(rel)) return "Grandparents & ancestors";
+    if (/^(father|mother|step|adoptive)/.test(rel)) return "Parents";
+    if (/^(wife|husband|spouse|partner|ex-)/.test(rel)) return "Partner";
+    if (/^(son|daughter|child)/.test(rel)) return "Children";
+    if (/^(brother|sister|half|twin)/.test(rel)) return "Siblings";
+    if (/aunt|uncle|cousin|niece|nephew|relative/.test(rel)) return "Extended family";
+    if (/family/.test(rel)) return "Families";
+    return "Other";
+  }
+  const GROUP_ORDER = ["Grandparents & ancestors", "Parents", "Partner", "Siblings", "Children", "Extended family", "In-laws", "Families", "Other"];
+
+  server.registerTool(
+    "character_family",
+    {
+      title: "🌳 Character Family",
+      description: "Family of one character grouped by relation (parents, partner, siblings, children, in-laws…), from PotterDB. Use get_character for the full profile.",
+      inputSchema: { name_or_slug: q("Name or slug, e.g. 'Harry Potter'.") },
+      annotations: { title: "Character Family", ...READ_ONLY },
+      _meta: UI_META,
+    },
+    safe(async ({ name_or_slug }: any) => {
+      const r = await pdbResolve("characters", name_or_slug);
+      if (!r.item) return didYouMean("character", name_or_slug, r.suggestions, "character_family");
+      const a = attrs(r.item);
+      const rels: string[] = a.family_members ?? [];
+      if (!rels.length) return text(`🌳 No family members recorded for **${a.name}**.\n\n_Source: ${SRC_PDB}_`);
+      const by = new Map<string, ReturnType<typeof parseRelative>[]>();
+      for (const raw of rels) {
+        const p = parseRelative(String(raw));
+        const g = relGroup(p.relation);
+        by.set(g, [...(by.get(g) ?? []), p]);
+      }
+      const groups = GROUP_ORDER.filter((g) => by.has(g)).map((label) => ({ label, members: by.get(label)!.slice(0, 16) }));
+      const md = groups
+        .map((g) => `**${g.label}:** ${g.members.slice(0, 10).map((m) => `${m.dead ? "† " : ""}${m.name}${m.relation && m.relation !== m.name.toLowerCase() ? ` (${m.relation})` : ""}`).join(", ")}${by.get(g.label)!.length > 10 ? ` … +${by.get(g.label)!.length - 10} more` : ""}`)
+        .join("\n");
+      return card(`## 🌳 ${a.name} — family\n${md}\n\n_† = deceased · Source: ${SRC_PDB}_`, {
+        kind: "family", name: a.name, image: a.image, house: clean(a.house), groups, sources: SRC_PDB,
+      });
     }),
   );
 
@@ -258,7 +323,8 @@ export function createServer(): McpServer {
       const body = `\n### Members (${SRC_PDB})\n${table(["Name", "Species", "Blood status", "Gender"], rows)}`;
       return card(head + body + pageFooter(members.total, members.items.length, page, limit, "house_roster"), {
         kind: "house", name, info: hInfo, total: members.total, sources: hInfo ? `${SRC_PDB} + ${SRC_WW}` : SRC_PDB,
-        members: members.items.map((i) => ({ name: attrs(i).name, species: attrs(i).species, blood_status: attrs(i).blood_status })),
+        members: members.items.map((i) => ({ name: attrs(i).name, slug: attrs(i).slug, species: attrs(i).species, blood_status: attrs(i).blood_status })),
+        nav: { name: "house_roster", arguments: { house: name, limit }, page, pages: Math.ceil(members.total / limit) },
       });
     }),
   );
@@ -275,17 +341,18 @@ export function createServer(): McpServer {
     safe(async ({ house }: any) => {
       const h = house ? bestMatches(house, HOUSES, (x) => x, 1)[0]?.item : undefined;
       if (house && !h) return text(`🔍 Unknown house "${house}". Choose one of: ${HOUSES.join(", ")}.`);
+      const again: Call = { name: "random_character", arguments: h ? { house: h } : {} };
       // PotterDB has no popularity field, so draw from a curated list of well-known characters first.
       const pool = [...(h ? FAMOUS[h] : Object.values(FAMOUS).flat())].sort(() => Math.random() - 0.5);
       for (const slug of pool.slice(0, 6)) {
         const item = await pdbBySlug("characters", slug).catch(() => undefined);
-        if (item) return card(`🎲 ${charCard(item, true)}\n\n_Source: ${SRC_PDB} · picked from well-known characters_`, charData(item));
+        if (item) return card(`🎲 ${charCard(item, true)}\n\n_Source: ${SRC_PDB} · picked from well-known characters_`, charData(item, undefined, again));
       }
       const f = h ? { house_eq: h } : {};
       const n = await pdbTotal("characters", f);
       if (!n) return text(`🔍 No characters found.`);
       const res = await pdbList("characters", f, { size: 1, page: 1 + Math.floor(Math.random() * n) });
-      return card(`🎲 ${charCard(res.items[0], true)}\n\n_Source: ${SRC_PDB}_`, charData(res.items[0]));
+      return card(`🎲 ${charCard(res.items[0], true)}\n\n_Source: ${SRC_PDB}_`, charData(res.items[0], undefined, again));
     }),
   );
 
@@ -334,6 +401,7 @@ export function createServer(): McpServer {
         page: pageSchema,
       },
       annotations: { title: "Search Spells", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ query, category, incantation, effect_contains, limit, page }: any) => {
       const res = await pdbList(
@@ -349,7 +417,15 @@ export function createServer(): McpServer {
         }
         return text(`🔍 No spells match those filters.\n\n_Source: ${SRC_PDB}_`);
       }
-      return text(res.items.map(spellLine).join("\n") + pageFooter(res.total, res.items.length, page, limit, "search_spells") + `\n_Source: ${SRC_PDB}_`);
+      return card(res.items.map(spellLine).join("\n") + pageFooter(res.total, res.items.length, page, limit, "search_spells") + `\n_Source: ${SRC_PDB}_`, {
+        kind: "list", title: "Spells", sub: `${res.total} found`, total: res.total, sources: SRC_PDB,
+        items: res.items.map((i) => ({
+          title: attrs(i).name, image: attrs(i).image, icon: "🪄",
+          sub: [stripPron(attrs(i).incantation), attrs(i).category, attrs(i).light && norm(attrs(i).light) !== "none" ? `${attrs(i).light} light` : undefined].filter(Boolean).join(" · "),
+          call: { name: "get_spell", arguments: { name_or_slug: attrs(i).slug } },
+        })),
+        nav: { name: "search_spells", arguments: { query, category, incantation, effect_contains, limit }, page, pages: Math.ceil(res.total / limit) },
+      });
     }),
   );
 
@@ -404,8 +480,8 @@ export function createServer(): McpServer {
     }),
   );
 
-  const spellData = (a: Record<string, any>) => ({
-    kind: "spell", name: a.name, image: a.image, wiki: a.wiki, sources: SRC_PDB,
+  const spellData = (a: Record<string, any>, again?: Call) => ({
+    kind: "spell", name: a.name, image: a.image, wiki: a.wiki, sources: SRC_PDB, again,
     incantation: stripPron(a.incantation), category: clean(a.category), effect: clean(a.effect), light: clean(a.light),
     rows: present([["Hand motion", a.hand], ["Creator", a.creator]]),
   });
@@ -425,7 +501,7 @@ export function createServer(): McpServer {
       if (!n) return text(`🔍 No spells in category "${category}".`);
       const res = await pdbList("spells", f, { size: 1, page: 1 + Math.floor(Math.random() * n) });
       const a = attrs(res.items[0]);
-      return card(`🎲 ${spellLine(res.items[0])}\n${facts([["Hand motion", a.hand], ["Creator", a.creator]])}\n\n_Source: ${SRC_PDB}_`, spellData(a));
+      return card(`🎲 ${spellLine(res.items[0])}\n${facts([["Hand motion", a.hand], ["Creator", a.creator]])}\n\n_Source: ${SRC_PDB}_`, spellData(a, { name: "random_spell", arguments: category ? { category } : {} }));
     }),
   );
 
@@ -444,6 +520,7 @@ export function createServer(): McpServer {
       description: "Search potions (PotterDB) and elixirs (Wizard World) by name.",
       inputSchema: { query: optQ("Part of the potion name, e.g. 'polyjuice'."), limit: limitSchema, page: pageSchema },
       annotations: { title: "Search Potions", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ query, limit, page }: any) => {
       const [res, el] = await Promise.all([
@@ -460,10 +537,23 @@ export function createServer(): McpServer {
       }
       let out = res.items.map((i) => `- **${attrs(i).name}**${attrs(i).difficulty ? ` · ${attrs(i).difficulty}` : ""} — ${truncate(String(clean(attrs(i).effect) ?? "no effect recorded"), 140)} (\`${attrs(i).slug}\`)`).join("\n");
       out += pageFooter(res.total, res.items.length, page, limit, "search_potions") + `\n_Source: ${SRC_PDB}_`;
+      let note: string | undefined;
       if (el.ok && el.data.length) {
-        out += `\n\n**Elixirs also in ${SRC_WW}:** ${el.data.slice(0, 10).map((e: any) => `${e.name}${e.difficulty && e.difficulty !== "Unknown" ? ` (${e.difficulty})` : ""}`).join(", ")}`;
-      } else if (!el.ok) out += `\n\n${WW_DOWN_NOTE}`;
-      return text(out);
+        note = `Elixirs also in ${SRC_WW}: ${el.data.slice(0, 10).map((e: any) => `${e.name}${e.difficulty && e.difficulty !== "Unknown" ? ` (${e.difficulty})` : ""}`).join(", ")}`;
+        out += `\n\n**${note.replace(":", ":**")}`;
+      } else if (!el.ok) {
+        note = WW_DOWN_NOTE;
+        out += `\n\n${WW_DOWN_NOTE}`;
+      }
+      return card(out, {
+        kind: "list", title: "Potions", sub: `${res.total} found`, total: res.total, note, sources: SRC_PDB,
+        items: res.items.map((i) => ({
+          title: attrs(i).name, image: attrs(i).image, icon: "⚗️",
+          sub: [attrs(i).difficulty, truncate(String(clean(attrs(i).effect) ?? ""), 80)].filter(Boolean).join(" · "),
+          call: { name: "get_potion", arguments: { name_or_slug: attrs(i).slug } },
+        })),
+        nav: { name: "search_potions", arguments: { query, limit }, page, pages: Math.ceil(res.total / limit) },
+      });
     }),
   );
 
@@ -513,8 +603,16 @@ export function createServer(): McpServer {
   async function allBooks() {
     return (await pdbList("books", {}, { size: 20, sort: "release_date" })).items;
   }
+  // Local corrections for known upstream errors (PotterDB lists Prisoner of Azkaban as 2002-11-15).
+  const MOVIE_FIXES: Record<string, Record<string, unknown>> = {
+    "prisoner of azkaban": { release_date: "2004-06-04" },
+  };
   async function allMovies() {
-    return (await pdbList("movies", {}, { size: 20, sort: "release_date" })).items;
+    const items = (await pdbList("movies", {}, { size: 20, sort: "release_date" })).items;
+    return items.map((m) => {
+      const fix = Object.entries(MOVIE_FIXES).find(([k]) => norm(String(attrs(m).title)).includes(k))?.[1];
+      return fix ? { ...m, attributes: { ...attrs(m), ...fix } } : m;
+    });
   }
   function pick(items: PdbItem[], query: string) {
     const ranked = bestMatches(query, items, (i) => `${attrs(i).title} ${attrs(i).slug}`, 3);
@@ -531,10 +629,18 @@ export function createServer(): McpServer {
       description: "All Harry Potter books in release order with author, pages and release date.",
       inputSchema: {},
       annotations: { title: "List Books", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async () => {
       const books = await allBooks();
-      return text(`## 📚 Books\n${table(["#", "Title", "Pages", "Released"], books.map((b, i) => [i + 1, attrs(b).title, attrs(b).pages, attrs(b).release_date]))}\n\nUse \`get_book\` with a title or number.\n\n_Source: ${SRC_PDB}_`);
+      return card(`## 📚 Books\n${table(["#", "Title", "Pages", "Released"], books.map((b, i) => [i + 1, attrs(b).title, attrs(b).pages, attrs(b).release_date]))}\n\nUse \`get_book\` with a title or number.\n\n_Source: ${SRC_PDB}_`, {
+        kind: "list", title: "Books", sub: `${books.length} books`, sources: SRC_PDB,
+        items: books.map((b, i) => ({
+          title: attrs(b).title, image: attrs(b).cover, icon: "📚",
+          sub: [`${attrs(b).pages} pages`, attrs(b).release_date].join(" · "),
+          call: { name: "get_book", arguments: { title_or_number: String(i + 1) } },
+        })),
+      });
     }),
   );
 
@@ -545,6 +651,7 @@ export function createServer(): McpServer {
       description: "Details and summary of one book plus its chapter list. Accepts a title, slug or number 1-7.",
       inputSchema: { title_or_number: q("e.g. 'Goblet of Fire' or '4'.") },
       annotations: { title: "Get Book", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ title_or_number }: any) => {
       const books = await allBooks();
@@ -552,8 +659,16 @@ export function createServer(): McpServer {
       if (!r.item) return didYouMean("book", title_or_number, r.suggestions, "get_book");
       const b = attrs(r.item);
       const ch = await getChapters(r.item.id);
-      return text(
+      return card(
         `## 📖 ${b.title}\n${facts([["Author", b.author], ["Pages", b.pages], ["Released", b.release_date], ["Dedication", b.dedication]])}\n\n${truncate(String(b.summary ?? ""), 900)}\n\n**Chapters (${ch.length}):** ${ch.map((c) => `${attrs(c).order}. ${attrs(c).title}`).join(" · ")}\n\n${link("Wiki", b.wiki) ?? ""}\n_Source: ${SRC_PDB}_`,
+        {
+          kind: "detail", name: b.title, image: b.cover, icon: "📖", subtitle: b.author, sources: SRC_PDB,
+          badges: [b.pages ? `${b.pages} pages` : undefined, b.release_date],
+          summary: truncate(String(b.summary ?? ""), 600),
+          rows: present([["Dedication", b.dedication]]),
+          chipsLabel: `Chapters (${ch.length})`, chips: ch.map((c) => `${attrs(c).order}. ${attrs(c).title}`),
+          links: b.wiki ? [{ label: "Wiki", url: b.wiki }] : [],
+        },
       );
     }),
   );
@@ -601,10 +716,18 @@ export function createServer(): McpServer {
       description: "All Harry Potter films in release order with director, runtime and release date.",
       inputSchema: {},
       annotations: { title: "List Movies", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async () => {
       const m = await allMovies();
-      return text(`## 🎬 Movies\n${table(["#", "Title", "Director", "Runtime", "Released"], m.map((x, i) => [i + 1, attrs(x).title, list(attrs(x).directors), attrs(x).running_time, attrs(x).release_date]))}\n\nUse \`get_movie\` with a title or number.\n\n_Source: ${SRC_PDB}_`);
+      return card(`## 🎬 Movies\n${table(["#", "Title", "Director", "Runtime", "Released"], m.map((x, i) => [i + 1, attrs(x).title, list(attrs(x).directors), attrs(x).running_time, attrs(x).release_date]))}\n\nUse \`get_movie\` with a title or number.\n\n_Source: ${SRC_PDB}_`, {
+        kind: "list", title: "Movies", sub: `${m.length} films`, sources: SRC_PDB,
+        items: m.map((x, i) => ({
+          title: attrs(x).title, image: attrs(x).poster, icon: "🎬",
+          sub: [list(attrs(x).directors), attrs(x).running_time, attrs(x).release_date].filter(Boolean).join(" · "),
+          call: { name: "get_movie", arguments: { title_or_number: String(i + 1) } },
+        })),
+      });
     }),
   );
 
@@ -615,18 +738,29 @@ export function createServer(): McpServer {
       description: "Details of one film: crew, budget, box office and summary. Accepts a title, slug or number.",
       inputSchema: { title_or_number: q("e.g. 'Prisoner of Azkaban' or '3'.") },
       annotations: { title: "Get Movie", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async ({ title_or_number }: any) => {
       const movies = await allMovies();
       const r = pick(movies, title_or_number);
       if (!r.item) return didYouMean("movie", title_or_number, r.suggestions, "get_movie");
       const m = attrs(r.item);
-      return text(
+      return card(
         `## 🍿 ${m.title}\n${facts([
           ["Released", m.release_date], ["Runtime", m.running_time], ["Rating", m.rating], ["Directors", list(m.directors)],
           ["Screenwriters", list(m.screenwriters)], ["Producers", list(m.producers)], ["Music", list(m.music_composers)],
           ["Budget", m.budget], ["Box office", m.box_office], ["Distributors", list(m.distributors)],
         ])}\n\n${truncate(String(m.summary ?? "").trim(), 800)}\n\n${[link("Trailer", m.trailer), link("Wiki", m.wiki)].filter(Boolean).join(" · ")}\n_Source: ${SRC_PDB} (community data; dates and figures may contain errors)_`,
+        {
+          kind: "detail", name: m.title, image: m.poster, icon: "🍿", subtitle: list(m.directors), sources: `${SRC_PDB} (some dates corrected locally)`,
+          badges: [m.release_date, m.running_time, m.rating],
+          summary: truncate(String(m.summary ?? "").trim(), 600),
+          rows: present([
+            ["Screenwriters", m.screenwriters], ["Producers", m.producers], ["Music", m.music_composers],
+            ["Budget", m.budget], ["Box office", m.box_office], ["Distributors", m.distributors],
+          ]),
+          links: [m.trailer ? { label: "Trailer", url: m.trailer } : undefined, m.wiki ? { label: "Wiki", url: m.wiki } : undefined].filter(Boolean),
+        },
       );
     }),
   );
@@ -639,22 +773,26 @@ export function createServer(): McpServer {
       description: "Check whether PotterDB and Wizard World are reachable, with response times. Use for debugging.",
       inputSchema: {},
       annotations: { title: "Sources Status", ...READ_ONLY },
+      _meta: UI_META,
     },
     safe(async () => {
       const ping = async (name: string, url: string) => {
         const t0 = Date.now();
+        const ms = () => `${Date.now() - t0} ms`;
         try {
           const r = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { accept: "application/json" } });
-          return [name, r.ok ? "✅ up" : `❌ HTTP ${r.status}`, `${Date.now() - t0} ms`, url];
+          return { name, ok: r.ok, status: r.ok ? "up" : `HTTP ${r.status}`, latency: ms(), url };
         } catch (e) {
-          return [name, `❌ ${e instanceof Error ? e.message : "unreachable"}`, `${Date.now() - t0} ms`, url];
+          return { name, ok: false, status: e instanceof Error ? e.message : "unreachable", latency: ms(), url };
         }
       };
-      const rows = await Promise.all([
+      const res = await Promise.all([
         ping(SRC_PDB, `${PDB}/spells?page%5Bsize%5D=1`),
         ping(SRC_WW, `${WW}/Houses`),
       ]);
-      return text(`## 🩺 Sources\n${table(["Source", "Status", "Latency", "Probe"], rows)}\n\nIf Wizard World is down, tools still work from PotterDB.`);
+      const rows = res.map((r) => [r.name, r.ok ? "✅ up" : `❌ ${r.status}`, r.latency, r.url]);
+      const note = "If Wizard World is down, tools still work from PotterDB.";
+      return card(`## 🩺 Sources\n${table(["Source", "Status", "Latency", "Probe"], rows)}\n\n${note}`, { kind: "status", rows: res, note });
     }),
   );
 
